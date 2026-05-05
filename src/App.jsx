@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef } from "react";
 
 // ============================================
 // 定数
@@ -148,7 +148,6 @@ export default function MagicSort() {
     };
   });
 
-  const [showDebug, setShowDebug] = useState(false);
   const [pourAnim, setPourAnim] = useState(null); // { from, to, color } | null
   const queuedClickRef = useRef(null); // アニメ中に来たクリックを記憶
   const isProcessingRef = useRef(false); // 処理中フラグ
@@ -319,65 +318,6 @@ export default function MagicSort() {
       background: "radial-gradient(ellipse at 50% 0%, #2a1f5e 0%, #15103e 40%, #08051f 100%)",
       fontFamily: "system-ui, sans-serif",
     }}>
-      {/* デバッグパネル */}
-      {showDebug && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          background: "rgba(0,0,0,0.85)",
-          color: "#0f0",
-          padding: "8px 12px",
-          fontSize: "10px",
-          fontFamily: "monospace",
-          zIndex: 1000,
-          maxHeight: "30vh",
-          overflowY: "auto",
-          borderBottom: "1px solid #0f0",
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-            <strong>🔍 DEBUG</strong>
-            <button
-              onClick={() => setShowDebug(false)}
-              style={{ background: "transparent", color: "#0f0", border: "1px solid #0f0", padding: "2px 6px", cursor: "pointer", fontSize: "10px" }}
-            >
-              CLOSE
-            </button>
-          </div>
-          <div>level={level} | bottles.length={bottles.length} | colors={difficulty.numColors} | selected={selected} | moves={moves}</div>
-          <div style={{ marginTop: 4 }}>
-            <strong>bottles:</strong>
-            {bottles.map((b, i) => (
-              <div key={i} style={{ marginLeft: 8 }}>
-                [{i}] len={b.length} = [{b.map(c => c !== undefined ? COLORS[c]?.name || `??${c}` : "U").join(", ")}]
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {!showDebug && (
-        <button
-          onClick={() => setShowDebug(true)}
-          style={{
-            position: "fixed",
-            top: 8,
-            right: 8,
-            background: "rgba(0,255,0,0.2)",
-            color: "#0f0",
-            border: "1px solid #0f0",
-            padding: "4px 8px",
-            fontSize: "10px",
-            zIndex: 1000,
-            cursor: "pointer",
-            fontFamily: "monospace",
-          }}
-        >
-          DEBUG
-        </button>
-      )}
-
       <div style={{
         position: "relative",
         zIndex: 10,
@@ -387,7 +327,7 @@ export default function MagicSort() {
         padding: "16px",
         maxWidth: "480px",
         margin: "0 auto",
-        paddingTop: showDebug ? "180px" : "16px",
+        paddingTop: "16px",
       }}>
         {/* ヘッダー */}
         <header style={{ textAlign: "center", marginBottom: 16 }}>
@@ -450,8 +390,6 @@ export default function MagicSort() {
                 pouringColor={pourAnim && pourAnim.from === idx ? pourAnim.color : null}
                 pourDirection={pourAnim && pourAnim.from === idx ? pourAnim.direction : null}
                 onClick={() => handleBottleClick(idx)}
-                debugIdx={idx}
-                showDebug={showDebug}
               />
             ))}
           </div>
@@ -559,7 +497,7 @@ export default function MagicSort() {
 // ============================================
 // ボトルコンポーネント
 // ============================================
-function Bottle({ bottle, hidden, isSelected, isPouringFrom, pouringColor, pourDirection, onClick, debugIdx, showDebug }) {
+function Bottle({ bottle, hidden, isSelected, isPouringFrom, pouringColor, pourDirection, onClick }) {
   // 傾きアニメーションのスタイルを方向で決定
   let pourTransform = "rotate(0)";
   let pourTransformOrigin = "bottom center";
@@ -595,18 +533,6 @@ function Bottle({ bottle, hidden, isSelected, isPouringFrom, pouringColor, pourD
         transition: "transform 0.3s",
       }}
     >
-      {/* デバッグ表示 */}
-      {showDebug && (
-        <div style={{
-          fontSize: 9,
-          color: "#0f0",
-          fontFamily: "monospace",
-          marginBottom: 2,
-        }}>
-          #{debugIdx} ({bottle.length})
-        </div>
-      )}
-
       {/* 傾き用ラッパー */}
       <div style={{
         width: "100%",
