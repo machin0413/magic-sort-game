@@ -1,778 +1,686 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
+import {
+  BOTTLE_CAPACITY,
+  MAX_BOTTLES,
+  getDifficulty,
+  generateStage,
+  isCleared,
+  isBottleComplete,
+  canPour,
+  isStuck,
+  pour,
+  pourAmount,
+  revealHidden,
+  starsFor,
+  loadSave,
+  persistSave,
+} from "./game.js";
+import { COLORS, themeFor } from "./colors.js";
+import { sfx, setMuted } from "./audio.js";
+import { CSS } from "./styles.js";
 
-// ============================================
-// 定数
-// ============================================
-const COLORS = [
-  { name: "ruby", value: "#e63946", glow: "#ff7a87" },
-  { name: "amber", value: "#f4a261", glow: "#ffc97a" },
-  { name: "emerald", value: "#06d6a0", glow: "#5dffce" },
-  { name: "sapphire", value: "#4cc9f0", glow: "#9ee5ff" },
-  { name: "amethyst", value: "#b66dff", glow: "#dca8ff" },
-  { name: "rose", value: "#ff5d8f", glow: "#ff9dbb" },
-  { name: "gold", value: "#ffd60a", glow: "#fff36b" },
-  { name: "ice", value: "#90e0ef", glow: "#c4f0f8" },
-];
+// 液体1ユニットの高さ（ボトル内高に対する%）
+const UNIT_H = 23.5;
 
-const BOTTLE_CAPACITY = 4;
+// 注ぎアニメーションのタイミング（CSSのtransition/delayと同期）
+const T_MOVE = 280;
+const T_BACK = 240;
 
-// ============================================
-// 難易度設定
-// ============================================
-function getDifficulty(level) {
-  if (level === 1) return { numColors: 3, freeBottles: 2, hiddenRate: 0 };
-  if (level === 2) return { numColors: 4, freeBottles: 2, hiddenRate: 0 };
-  if (level === 3) return { numColors: 5, freeBottles: 2, hiddenRate: 0 };
-  if (level === 4) return { numColors: 6, freeBottles: 2, hiddenRate: 0 };
-  if (level === 5) return { numColors: 6, freeBottles: 2, hiddenRate: 0.2 };
-  if (level === 6) return { numColors: 7, freeBottles: 2, hiddenRate: 0.25 };
-  if (level === 7) return { numColors: 6, freeBottles: 1, hiddenRate: 0.3 };
-  if (level === 8) return { numColors: 7, freeBottles: 1, hiddenRate: 0.35 };
-  if (level === 9) return { numColors: 8, freeBottles: 2, hiddenRate: 0.35 };
-  if (level === 10) return { numColors: 8, freeBottles: 1, hiddenRate: 0.4 };
-  // 11以降は最高難度を維持
-  return { numColors: 8, freeBottles: 1, hiddenRate: 0.45 };
+// 背景装飾はモジュール読み込み時に一度だけ生成
+const BG_STARS = Array.from({ length: 34 }, () => ({
+  left: Math.random() * 100,
+  top: Math.random() * 60,
+  delay: Math.random() * 3,
+  dur: 2.2 + Math.random() * 2.5,
+  size: 1.5 + Math.random() * 2,
+}));
+const BG_RISE = Array.from({ length: 9 }, () => ({
+  left: 4 + Math.random() * 92,
+  delay: Math.random() * 9,
+  dur: 7 + Math.random() * 6,
+}));
+
+function freshGame(level) {
+  const stage = generateStage(level);
+  return {
+    level,
+    bottles: stage.bottles,
+    hidden: stage.hidden,
+    par: stage.par,
+    selected: null,
+    history: [],
+    moves: 0,
+    cleared: false,
+    stuck: false,
+    stars: 0,
+  };
 }
 
-// ============================================
-// ロジック
-// ============================================
-function generateStage(level) {
-  const { numColors, freeBottles, hiddenRate } = getDifficulty(level);
-  const numBottles = numColors + freeBottles;
-
-  // 全ユニット作成
-  const allUnits = [];
-  for (let i = 0; i < numColors; i++) {
-    for (let j = 0; j < BOTTLE_CAPACITY; j++) {
-      allUnits.push(i);
-    }
-  }
-
-  // シャッフル
-  for (let i = allUnits.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [allUnits[i], allUnits[j]] = [allUnits[j], allUnits[i]];
-  }
-
-  // ボトルに詰める（最初の numColors 本に詰めて、残りは空）
-  const bottles = [];
-  for (let i = 0; i < numBottles; i++) bottles.push([]);
-  let unitIdx = 0;
-  for (let b = 0; b < numColors; b++) {
-    for (let s = 0; s < BOTTLE_CAPACITY; s++) {
-      bottles[b].push(allUnits[unitIdx++]);
-    }
-  }
-
-  // 隠し色マスク
-  const hidden = bottles.map((bottle) =>
-    bottle.map((_, idx) => {
-      if (hiddenRate === 0) return false;
-      if (idx === bottle.length - 1) return false;
-      return Math.random() < hiddenRate;
-    })
-  );
-
-  return { bottles, hidden };
-}
-
-function isCleared(bottles) {
-  return bottles.every((b) => {
-    if (b.length === 0) return true;
-    if (b.length !== BOTTLE_CAPACITY) return false;
-    return b.every((c) => c === b[0]);
+export default function App() {
+  const [save, setSave] = useState(() => {
+    return (
+      loadSave() || { level: 1, sound: true, totalStars: 0, clears: 0, best: {} }
+    );
   });
-}
+  const [game, setGame] = useState(() => freshGame(loadSave()?.level || 1));
+  const [pourAnim, setPourAnim] = useState(null);
+  const [flash, setFlash] = useState(null); // { idx, key }
+  const [showLevels, setShowLevels] = useState(false);
 
-function canPour(bottles, from, to) {
-  const src = bottles[from];
-  const dst = bottles[to];
-  if (!src || !dst) return false;
-  if (src.length === 0) return false;
-  if (dst.length >= BOTTLE_CAPACITY) return false;
-  if (dst.length === 0) return true;
-  return src[src.length - 1] === dst[dst.length - 1];
-}
+  const gameRef = useRef(game);
+  gameRef.current = game;
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  const bottleRefs = useRef([]);
+  const sceneRef = useRef(null);
+  const boardRef = useRef(null);
+  const isProcessingRef = useRef(false);
+  const queuedClickRef = useRef(null);
 
-function isStuck(bottles) {
-  if (isCleared(bottles)) return false;
-  for (let i = 0; i < bottles.length; i++) {
-    for (let j = 0; j < bottles.length; j++) {
-      if (i === j) continue;
-      if (canPour(bottles, i, j)) return false;
-    }
-  }
-  return true;
-}
+  useEffect(() => {
+    setMuted(!save.sound);
+  }, [save.sound]);
 
-function pour(bottles, from, to) {
-  const newBottles = bottles.map((b) => [...b]);
-  const topColor = newBottles[from][newBottles[from].length - 1];
-  while (
-    newBottles[from].length > 0 &&
-    newBottles[from][newBottles[from].length - 1] === topColor &&
-    newBottles[to].length < BOTTLE_CAPACITY
-  ) {
-    newBottles[to].push(newBottles[from].pop());
-  }
-  return newBottles;
-}
-
-function revealHidden(bottlesArr, hiddenArr) {
-  return hiddenArr.map((bh, bi) =>
-    bh.map((h, si) => {
-      if (!h) return false;
-      if (si === bottlesArr[bi].length - 1) return false;
-      return true;
-    })
-  );
-}
-
-// ============================================
-// メインコンポーネント
-// ============================================
-export default function MagicSort() {
-  // 初期化を遅延評価で1回だけ実行（確実に動く）
-  const [gameState, setGameState] = useState(() => {
-    const stage = generateStage(1);
-    return {
-      level: 1,
-      bottles: stage.bottles,
-      hidden: stage.hidden,
-      selected: null,
-      history: [],
-      moves: 0,
-      cleared: false,
-      stuck: false,
+  // 検証・デバッグ用フック
+  useEffect(() => {
+    window.__ms = {
+      get game() {
+        return gameRef.current;
+      },
+      click: (i) => handleBottleClick(i),
+      load: (lv) => loadLevel(lv),
     };
   });
 
-  const [pourAnim, setPourAnim] = useState(null); // { from, to, color } | null
-  const queuedClickRef = useRef(null); // アニメ中に来たクリックを記憶
-  const isProcessingRef = useRef(false); // 処理中フラグ
+  const { level, bottles, hidden, par, selected, history, moves, cleared, stuck } = game;
+  const theme = themeFor(level);
+  const difficulty = getDifficulty(level);
 
-  const { level, bottles, hidden, selected, history, moves, cleared, stuck } = gameState;
+  // ---------- レイアウト（5本までは1列、以降は奥/手前の2列） ----------
+  const n = bottles.length;
+  const backCount = n > 5 ? Math.ceil(n / 2) : 0;
+  const rowsIdx = backCount
+    ? [
+        Array.from({ length: backCount }, (_, i) => i),
+        Array.from({ length: n - backCount }, (_, i) => backCount + i),
+      ]
+    : [Array.from({ length: n }, (_, i) => i)];
+  const maxRowLen = Math.max(...rowsIdx.map((r) => r.length));
 
-  // 実際の処理ロジック（クリック処理本体）
-  const processClick = (idx, currentState) => {
-    const { bottles: curBottles, hidden: curHidden, selected: curSelected, history: curHistory, moves: curMoves } = currentState;
+  const updateSave = (patch) => {
+    const next = { ...saveRef.current, ...patch };
+    setSave(next);
+    persistSave(next);
+  };
 
-    if (currentState.cleared || currentState.stuck) return;
+  const loadLevel = (lv) => {
+    isProcessingRef.current = false;
+    queuedClickRef.current = null;
+    setPourAnim(null);
+    setFlash(null);
+    setShowLevels(false);
+    setGame(freshGame(lv));
+  };
 
-    if (curSelected === null) {
-      if (curBottles[idx].length === 0) return;
-      setGameState({ ...currentState, selected: idx });
-      return;
-    }
+  // ---------- 注ぎの3Dジオメトリ ----------
+  const computePourGeometry = (fromIdx, toIdx) => {
+    const sceneEl = sceneRef.current;
+    const sEl = bottleRefs.current[fromIdx];
+    const tEl = bottleRefs.current[toIdx];
+    if (!sceneEl || !sEl || !tEl) return null;
+    const wrap = sceneEl.getBoundingClientRect();
+    const s = sEl.getBoundingClientRect();
+    const t = tEl.getBoundingClientRect();
+    const bw = s.width;
+    const sCx = s.left + s.width / 2;
+    const tCx = t.left + t.width / 2;
+    const side = tCx >= sCx ? 1 : -1;
+    // 回転後にボトルの口が注ぎ先リムの真上へ来る位置を逆算（回転72°前提）
+    const desiredCx = tCx - side * 0.894 * bw;
+    const desiredCy = t.top - 0.09 * bw;
+    const srcCenterY = s.top + 1.11 * bw;
+    // 奥の列はperspectiveで縮小表示されるため移動量を補正
+    const backScale = fromIdx < backCount ? 1.085 : 1;
+    const tx = (desiredCx - sCx) * backScale;
+    const ty = (desiredCy - srcCenterY) * backScale;
+    const tgtRimY = t.top + 0.17 * bw;
+    return {
+      tx,
+      ty,
+      rot: side * 72,
+      stream: {
+        x: tCx - wrap.left,
+        top: tgtRimY - 0.55 * bw - wrap.top,
+        h: 0.55 * bw,
+        splashTop: tgtRimY - wrap.top - 5,
+        splashX: tCx - wrap.left,
+      },
+    };
+  };
 
-    if (curSelected === idx) {
-      setGameState({ ...currentState, selected: null });
-      return;
-    }
+  // ---------- クリック処理 ----------
+  const processClick = (idx, cur) => {
+    if (cur.cleared || cur.stuck) return;
+    const curBottles = cur.bottles;
 
-    if (canPour(curBottles, curSelected, idx)) {
-      const colorIdx = curBottles[curSelected][curBottles[curSelected].length - 1];
-      const color = COLORS[colorIdx];
-      const fromIdx = curSelected;
-      const toIdx = idx;
-
-      // 注ぐ方向を計算
-      const fromRow = Math.floor(fromIdx / cols);
-      const fromCol = fromIdx % cols;
-      const toRow = Math.floor(toIdx / cols);
-      const toCol = toIdx % cols;
-      let direction;
-      if (toRow === fromRow) {
-        direction = toCol > fromCol ? "right" : "left";
-      } else if (toCol === fromCol) {
-        direction = toRow > fromRow ? "down" : "up";
-      } else {
-        direction = toCol > fromCol ? "right" : "left";
+    if (cur.selected === null) {
+      if (curBottles[idx].length === 0 || isBottleComplete(curBottles[idx])) {
+        sfx.deny();
+        return;
       }
+      sfx.select();
+      setGame({ ...cur, selected: idx });
+      return;
+    }
 
-      // データを即座に更新（高速化）
+    if (cur.selected === idx) {
+      sfx.deselect();
+      setGame({ ...cur, selected: null });
+      return;
+    }
+
+    if (canPour(curBottles, cur.selected, idx)) {
+      const fromIdx = cur.selected;
+      const toIdx = idx;
+      const units = pourAmount(curBottles, fromIdx, toIdx);
+      const colorIdx = curBottles[fromIdx][curBottles[fromIdx].length - 1];
+      const geo = computePourGeometry(fromIdx, toIdx);
+
       const newBottles = pour(curBottles, fromIdx, toIdx);
-      const newHidden = revealHidden(newBottles, curHidden);
-      const newHistory = [...curHistory, {
-        bottles: curBottles.map((b) => [...b]),
-        hidden: curHidden.map((h) => [...h]),
-      }];
+      const newHidden = revealHidden(newBottles, cur.hidden);
+      const newMoves = cur.moves + 1;
+      const nowCleared = isCleared(newBottles);
+      const nowStuck = !nowCleared && isStuck(newBottles);
+      const justCompleted =
+        isBottleComplete(newBottles[toIdx]) && !isBottleComplete(curBottles[toIdx]);
+      const stars = nowCleared ? starsFor(newMoves, cur.par) : 0;
+      const newState = {
+        ...cur,
+        bottles: newBottles,
+        hidden: newHidden,
+        history: [
+          ...cur.history,
+          { bottles: curBottles.map((b) => [...b]), hidden: cur.hidden.map((h) => [...h]) },
+        ],
+        moves: newMoves,
+        selected: null,
+        cleared: nowCleared,
+        stuck: nowStuck,
+        stars,
+      };
 
+      const tPour = 240 + units * 150;
       isProcessingRef.current = true;
-      setPourAnim({ from: fromIdx, to: toIdx, color, direction });
+      sfx.pour(units);
+      setPourAnim({
+        from: fromIdx,
+        to: toIdx,
+        colorIdx,
+        units,
+        prevToLen: curBottles[toIdx].length,
+        returning: false,
+        ...(geo || { tx: 0, ty: -30, rot: 40, stream: null }),
+      });
 
-      // ごく短い遅延でデータを更新（傾き始めと同時に色が動く）
       setTimeout(() => {
-        setGameState({
-          ...currentState,
-          bottles: newBottles,
-          hidden: newHidden,
-          history: newHistory,
-          moves: curMoves + 1,
-          selected: null,
-          cleared: isCleared(newBottles),
-          stuck: !isCleared(newBottles) && isStuck(newBottles),
-        });
-      }, 80);
+        setGame(newState);
+        if (justCompleted) {
+          setFlash({ idx: toIdx, key: Date.now() });
+          sfx.complete();
+        }
+        if (nowCleared) {
+          sfx.clear();
+          const s = saveRef.current;
+          const prevBest = s.best[cur.level] || 0;
+          updateSave({
+            level: Math.max(s.level, cur.level + 1),
+            totalStars: s.totalStars + Math.max(0, stars - prevBest),
+            clears: s.clears + 1,
+            best: { ...s.best, [cur.level]: Math.max(prevBest, stars) },
+          });
+        } else if (nowStuck) {
+          sfx.stuck();
+        }
+      }, T_MOVE);
 
-      // アニメ終了
+      setTimeout(() => {
+        setPourAnim((p) => (p ? { ...p, returning: true } : null));
+      }, T_MOVE + tPour);
+
       setTimeout(() => {
         setPourAnim(null);
         isProcessingRef.current = false;
-        // キューに溜まったクリックを処理
         if (queuedClickRef.current !== null) {
-          const queuedIdx = queuedClickRef.current;
+          const q = queuedClickRef.current;
           queuedClickRef.current = null;
-          // 最新のstateで再処理
-          setGameState((latest) => {
-            // setGameState コールバック内で processClick を呼ぶのは状態同期が難しいので、
-            // 次のtickで処理
-            setTimeout(() => processClick(queuedIdx, latest), 0);
-            return latest;
-          });
+          processClick(q, gameRef.current);
         }
-      }, 250);
+      }, T_MOVE + tPour + T_BACK);
     } else {
-      if (curBottles[idx].length > 0) {
-        setGameState({ ...currentState, selected: idx });
+      if (curBottles[idx].length > 0 && !isBottleComplete(curBottles[idx])) {
+        sfx.select();
+        setGame({ ...cur, selected: idx });
       } else {
-        setGameState({ ...currentState, selected: null });
+        sfx.deny();
+        setGame({ ...cur, selected: null });
       }
     }
   };
 
   const handleBottleClick = (idx) => {
-    // アニメ中はクリックを記憶（最新の1つだけ覚える）
     if (isProcessingRef.current) {
       queuedClickRef.current = idx;
       return;
     }
-    processClick(idx, gameState);
+    processClick(idx, gameRef.current);
   };
 
   const handleUndo = () => {
-    if (history.length === 0) return;
-    const last = history[history.length - 1];
-    setGameState({
-      ...gameState,
+    const cur = gameRef.current;
+    if (cur.history.length === 0 || isProcessingRef.current) return;
+    sfx.undo();
+    const last = cur.history[cur.history.length - 1];
+    setGame({
+      ...cur,
       bottles: last.bottles,
       hidden: last.hidden,
-      history: history.slice(0, -1),
-      moves: Math.max(0, moves - 1),
+      history: cur.history.slice(0, -1),
+      moves: Math.max(0, cur.moves - 1),
       selected: null,
+      cleared: false,
       stuck: false,
+      stars: 0,
     });
   };
 
-  const handleReset = () => {
-    const stage = generateStage(level);
-    setGameState({
-      level,
-      bottles: stage.bottles,
-      hidden: stage.hidden,
-      selected: null,
-      history: [],
-      moves: 0,
-      cleared: false,
-      stuck: false,
-    });
-  };
-
-  const handleNextLevel = () => {
-    const newLevel = level + 1;
-    const stage = generateStage(newLevel);
-    setGameState({
-      level: newLevel,
-      bottles: stage.bottles,
-      hidden: stage.hidden,
-      selected: null,
-      history: [],
-      moves: 0,
-      cleared: false,
-      stuck: false,
-    });
-  };
+  const handleReset = () => loadLevel(level);
+  const handleNext = () => loadLevel(level + 1);
 
   const handleAddBottle = () => {
-    if (bottles.length >= 14) return;
-    const newHistory = [...history, { bottles: bottles.map((b) => [...b]), hidden: hidden.map((h) => [...h]) }];
-    setGameState({
-      ...gameState,
-      bottles: [...bottles, []],
-      hidden: [...hidden, []],
-      history: newHistory,
+    const cur = gameRef.current;
+    if (cur.bottles.length >= MAX_BOTTLES || isProcessingRef.current) return;
+    sfx.select();
+    setGame({
+      ...cur,
+      bottles: [...cur.bottles, []],
+      hidden: [...cur.hidden, []],
+      history: [
+        ...cur.history,
+        { bottles: cur.bottles.map((b) => [...b]), hidden: cur.hidden.map((h) => [...h]) },
+      ],
       stuck: false,
     });
   };
 
-  const cols = 5;
-  const difficulty = getDifficulty(level);
+  const toggleSound = () => updateSave({ sound: !saveRef.current.sound });
+
+  // ---------- 視差（ポインタ追従・stateを介さず直接CSS変数を更新） ----------
+  const handleParallax = (e) => {
+    const el = boardRef.current;
+    if (!el || !sceneRef.current) return;
+    const r = sceneRef.current.getBoundingClientRect();
+    const nx = (e.clientX - r.left) / r.width - 0.5;
+    const ny = (e.clientY - r.top) / r.height - 0.5;
+    el.style.setProperty("--tx", `${(nx * 6).toFixed(2)}deg`);
+    el.style.setProperty("--ty", `${(-ny * 4).toFixed(2)}deg`);
+  };
+  const resetParallax = () => {
+    const el = boardRef.current;
+    if (!el) return;
+    el.style.setProperty("--tx", "0deg");
+    el.style.setProperty("--ty", "0deg");
+  };
+
+  // ---------- 描画 ----------
+  const bwCalc = `min(72px, calc((min(100vw, 560px) - 32px - ${(maxRowLen - 1) * 10}px) / ${maxRowLen}))`;
+  const showClearModal = cleared && !pourAnim;
+  const showStuckModal = stuck && !cleared && !pourAnim;
 
   return (
-    <div style={{
-      minHeight: "100vh",
-      width: "100%",
-      position: "relative",
-      overflow: "hidden",
-      background: "radial-gradient(ellipse at 50% 0%, #2a1f5e 0%, #15103e 40%, #08051f 100%)",
-      fontFamily: "system-ui, sans-serif",
-    }}>
-      <div style={{
-        position: "relative",
-        zIndex: 10,
-        display: "flex",
-        flexDirection: "column",
-        minHeight: "100vh",
-        padding: "16px",
-        maxWidth: "480px",
-        margin: "0 auto",
-        paddingTop: "16px",
-      }}>
-        {/* ヘッダー */}
-        <header style={{ textAlign: "center", marginBottom: 16 }}>
-          <div style={{ fontSize: 10, letterSpacing: "0.4em", color: "rgba(255, 215, 0, 0.5)", marginBottom: 2 }}>
-            ~ MYSTIC POTION ~
-          </div>
-          <h1 style={{
-            fontSize: 32,
-            fontWeight: 700,
-            letterSpacing: "0.1em",
-            background: "linear-gradient(180deg, #ffd700 0%, #f4a261 60%, #c77d3a 100%)",
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
-            margin: 0,
-            fontFamily: "Georgia, serif",
-          }}>
-            Magic Sort
-          </h1>
+    <div
+      className="scene"
+      ref={(el) => (sceneRef.current = el)}
+      onPointerMove={handleParallax}
+      onPointerLeave={resetParallax}
+      style={{
+        "--sky0": theme.sky[0],
+        "--sky1": theme.sky[1],
+        "--sky2": theme.sky[2],
+        "--accent": theme.accent,
+        "--mist": theme.mist,
+      }}
+    >
+      <style>{CSS}</style>
+
+      {/* 背景装飾 */}
+      {BG_STARS.map((s, i) => (
+        <div
+          key={i}
+          className="star"
+          style={{
+            left: `${s.left}%`,
+            top: `${s.top}%`,
+            width: s.size,
+            height: s.size,
+            animationDelay: `${s.delay}s`,
+            animationDuration: `${s.dur}s`,
+          }}
+        />
+      ))}
+      <div className="bg-orb" style={{ width: 260, height: 260, left: "-8%", top: "8%", background: theme.mist }} />
+      <div className="bg-orb" style={{ width: 300, height: 300, right: "-12%", top: "42%", background: theme.mist, animationDelay: "-8s" }} />
+      {BG_RISE.map((b, i) => (
+        <div
+          key={i}
+          className="rise"
+          style={{ left: `${b.left}%`, animationDelay: `${b.delay}s`, animationDuration: `${b.dur}s` }}
+        />
+      ))}
+      <div className="bg-mist" />
+
+      <div className="frame">
+        <header className="brand">
+          <div className="brand-sub">~ MYSTIC POTION ~</div>
+          <h1 className="brand-title">Magic Sort</h1>
+          <div className="theme-name">{theme.jp}</div>
         </header>
 
-        {/* ステータス */}
-        <div style={{
-          display: "flex",
-          justifyContent: "space-around",
-          alignItems: "center",
-          marginBottom: 16,
-          padding: "8px 16px",
-          borderRadius: 16,
-          background: "rgba(255,255,255,0.04)",
-          border: "1px solid rgba(255,215,0,0.12)",
-        }}>
-          <Stat label="LEVEL" value={String(level).padStart(3, "0")} />
-          <div style={{ width: 1, height: 32, background: "rgba(255,215,0,0.15)" }} />
-          <Stat label="MOVES" value={moves} />
-          <div style={{ width: 1, height: 32, background: "rgba(255,215,0,0.15)" }} />
-          <Stat label="COLORS" value={difficulty.numColors} />
-        </div>
-
-        {/* ボトル群 */}
-        <div style={{
-          flex: 1,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "16px 0",
-        }}>
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-            gap: "10px",
-            width: "100%",
-          }}>
-            {bottles.map((bottle, idx) => (
-              <Bottle
-                key={idx}
-                bottle={bottle}
-                hidden={hidden[idx] || []}
-                isSelected={selected === idx}
-                isPouringFrom={pourAnim && pourAnim.from === idx}
-                pouringColor={pourAnim && pourAnim.from === idx ? pourAnim.color : null}
-                pourDirection={pourAnim && pourAnim.from === idx ? pourAnim.direction : null}
-                onClick={() => handleBottleClick(idx)}
-              />
-            ))}
+        <div className="statbar">
+          <div className="stat">
+            <div className="stat-label">LEVEL</div>
+            <div className="stat-value">{String(level).padStart(3, "0")}</div>
+          </div>
+          <div className="stat-sep" />
+          <div className="stat">
+            <div className="stat-label">MOVES</div>
+            <div className="stat-value">
+              {moves} <small>/ {par}</small>
+            </div>
+          </div>
+          <div className="stat-sep" />
+          <div className="stat">
+            <div className="stat-label">STARS</div>
+            <div className="stat-value">★ {save.totalStars}</div>
           </div>
         </div>
 
-        {/* コントロール */}
-        <div style={{ display: "flex", justifyContent: "center", gap: 12, marginTop: 8 }}>
-          <ControlButton onClick={handleUndo} disabled={history.length === 0} icon="↶" label="UNDO" />
-          <ControlButton onClick={handleAddBottle} disabled={bottles.length >= 14} icon="+" label="ADD" />
-          <ControlButton onClick={handleReset} icon="⟳" label="RESET" />
+        <div className="board-wrap">
+          <div className="board" ref={(el) => (boardRef.current = el)} style={{ "--bw": bwCalc }}>
+            {rowsIdx.map((row, ri) => (
+              <div key={ri} className={`row ${backCount && ri === 0 ? "back" : "front"}`}>
+                {row.map((idx) => (
+                  <Bottle
+                    key={idx}
+                    idx={idx}
+                    bottle={bottles[idx]}
+                    hiddenArr={hidden[idx] || []}
+                    isSelected={selected === idx}
+                    pourable={
+                      selected !== null &&
+                      selected !== idx &&
+                      !pourAnim &&
+                      canPour(bottles, selected, idx)
+                    }
+                    complete={isBottleComplete(bottles[idx])}
+                    flashing={flash && flash.idx === idx}
+                    pourAnim={pourAnim}
+                    refFn={(el) => (bottleRefs.current[idx] = el)}
+                    onClick={() => handleBottleClick(idx)}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+
+          {/* 注ぎストリーム（3D変形の外のオーバーレイ） */}
+          {pourAnim && !pourAnim.returning && pourAnim.stream && (
+            <div className="stream-layer" style={{ position: "fixed", inset: 0 }}>
+              <div
+                className="stream"
+                style={{
+                  left: pourAnim.stream.x - 3,
+                  top: pourAnim.stream.top,
+                  height: pourAnim.stream.h,
+                  "--pc": COLORS[pourAnim.colorIdx].value,
+                  background: `linear-gradient(180deg, ${COLORS[pourAnim.colorIdx].glow}, ${COLORS[pourAnim.colorIdx].value})`,
+                }}
+              />
+              <div
+                className="splash"
+                style={{
+                  left: pourAnim.stream.splashX - 13,
+                  top: pourAnim.stream.splashTop,
+                  "--pc": COLORS[pourAnim.colorIdx].glow,
+                }}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="controls">
+          <button className="ctrl" onClick={handleUndo} disabled={history.length === 0}>
+            <div className="ctrl-icon">↶</div>
+            <div className="ctrl-label">UNDO</div>
+          </button>
+          <button className="ctrl" onClick={handleAddBottle} disabled={bottles.length >= MAX_BOTTLES}>
+            <div className="ctrl-icon">+</div>
+            <div className="ctrl-label">ADD</div>
+          </button>
+          <button className="ctrl" onClick={handleReset}>
+            <div className="ctrl-icon">⟳</div>
+            <div className="ctrl-label">RESET</div>
+          </button>
+          <button className="ctrl" onClick={() => setShowLevels(true)}>
+            <div className="ctrl-icon">▦</div>
+            <div className="ctrl-label">LEVELS</div>
+          </button>
+          <button className="ctrl" onClick={toggleSound}>
+            <div className="ctrl-icon">{save.sound ? "♪" : "∅"}</div>
+            <div className="ctrl-label">{save.sound ? "SOUND" : "MUTED"}</div>
+          </button>
         </div>
       </div>
 
-      {/* モーダル */}
-      {cleared && (
+      {/* クリアモーダル */}
+      {showClearModal && (
         <Modal title="CLEAR" subtitle="魔法は完成した">
-          <p style={{ color: "rgba(255,236,179,0.8)", textAlign: "center", marginBottom: 8, fontSize: 16 }}>
-            {moves} 手で完成
+          <Confetti />
+          <div className="stars-row">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className={`star-big ${game.stars >= i ? "earned" : ""}`}>
+                ★
+              </div>
+            ))}
+          </div>
+          <p className="modal-note">
+            {moves} 手で完成（PAR {par}）
           </p>
-          <p style={{ color: "rgba(255,215,0,0.6)", textAlign: "center", marginBottom: 24, fontSize: 12, letterSpacing: "0.2em", fontFamily: "Georgia, serif" }}>
-            NEXT: LEVEL {String(level + 1).padStart(3, "0")}
-          </p>
-          <button
-            onClick={handleNextLevel}
-            style={{
-              width: "100%",
-              padding: "12px 32px",
-              borderRadius: 999,
-              fontWeight: 600,
-              letterSpacing: "0.2em",
-              fontSize: 14,
-              cursor: "pointer",
-              background: "linear-gradient(135deg, #ffd700 0%, #f4a261 100%)",
-              color: "#1a1a3e",
-              boxShadow: "0 0 30px rgba(244, 162, 97, 0.5)",
-              fontFamily: "Georgia, serif",
-              border: "none",
-            }}
-          >
-            NEXT LEVEL
+          <button className="btn primary" onClick={handleNext}>
+            NEXT — LEVEL {String(level + 1).padStart(3, "0")}
+          </button>
+          <div style={{ height: 10 }} />
+          <button className="btn ghost" onClick={handleReset}>
+            REPLAY
           </button>
         </Modal>
       )}
 
-      {stuck && !cleared && (
+      {/* 手詰まりモーダル */}
+      {showStuckModal && (
         <Modal title="STUCK" subtitle="手詰まり">
-          <p style={{ color: "rgba(255,236,179,0.8)", textAlign: "center", marginBottom: 24, fontSize: 14 }}>
-            ボトルを追加するか、リセットしましょう
-          </p>
-          <div style={{ display: "flex", gap: 12 }}>
+          <p className="modal-note">打つ手がありません。戻るか、ボトルを追加しましょう</p>
+          <div className="btn-row">
+            <button className="btn ghost" onClick={handleUndo} disabled={history.length === 0}>
+              ↶ UNDO
+            </button>
             <button
+              className="btn cool"
               onClick={handleAddBottle}
-              disabled={bottles.length >= 14}
-              style={{
-                flex: 1,
-                padding: "12px 16px",
-                borderRadius: 999,
-                fontWeight: 600,
-                letterSpacing: "0.15em",
-                fontSize: 12,
-                cursor: bottles.length >= 14 ? "not-allowed" : "pointer",
-                opacity: bottles.length >= 14 ? 0.4 : 1,
-                background: "linear-gradient(135deg, #4cc9f0 0%, #b66dff 100%)",
-                color: "white",
-                fontFamily: "Georgia, serif",
-                border: "none",
-              }}
+              disabled={bottles.length >= MAX_BOTTLES}
             >
               + BOTTLE
             </button>
-            <button
-              onClick={handleReset}
-              style={{
-                flex: 1,
-                padding: "12px 16px",
-                borderRadius: 999,
-                fontWeight: 600,
-                letterSpacing: "0.15em",
-                fontSize: 12,
-                cursor: "pointer",
-                background: "linear-gradient(135deg, #ffd700 0%, #f4a261 100%)",
-                color: "#1a1a3e",
-                fontFamily: "Georgia, serif",
-                border: "none",
-              }}
-            >
+            <button className="btn primary" onClick={handleReset}>
               RESET
             </button>
           </div>
         </Modal>
       )}
 
-      <style>{`
-        @keyframes streamPour {
-          0% { opacity: 0; transform: translateX(-50%) translateY(-30px) scaleY(0); }
-          15% { opacity: 1; transform: translateX(-50%) translateY(-10px) scaleY(0.5); }
-          80% { opacity: 1; transform: translateX(-50%) translateY(0px) scaleY(1); }
-          100% { opacity: 0; transform: translateX(-50%) translateY(0px) scaleY(1); }
-        }
-      `}</style>
+      {/* レベル選択モーダル */}
+      {showLevels && (
+        <Modal title="LEVELS" subtitle="旅の記録">
+          <div className="level-grid">
+            {Array.from({ length: save.level }, (_, i) => i + 1).map((lv) => (
+              <button
+                key={lv}
+                className={`level-cell ${lv === level ? "current" : ""}`}
+                onClick={() => loadLevel(lv)}
+              >
+                <div className="level-num">{lv}</div>
+                <div className="level-stars">
+                  {save.best[lv] ? "★".repeat(save.best[lv]) : lv < save.level ? "—" : "NEW"}
+                </div>
+              </button>
+            ))}
+          </div>
+          <button className="btn ghost" onClick={() => setShowLevels(false)}>
+            CLOSE
+          </button>
+        </Modal>
+      )}
     </div>
   );
 }
 
 // ============================================
-// ボトルコンポーネント
+// ボトル（純粋コンポーネント・フックなし）
 // ============================================
-function Bottle({ bottle, hidden, isSelected, isPouringFrom, pouringColor, pourDirection, onClick }) {
-  // 傾きアニメーションのスタイルを方向で決定
-  let pourTransform = "rotate(0)";
-  let pourTransformOrigin = "bottom center";
-  if (isPouringFrom) {
-    if (pourDirection === "right") {
-      pourTransform = "rotate(25deg) translateX(8px)";
-      pourTransformOrigin = "bottom left";
-    } else if (pourDirection === "left") {
-      pourTransform = "rotate(-25deg) translateX(-8px)";
-      pourTransformOrigin = "bottom right";
-    } else if (pourDirection === "down") {
-      // 真下：少し持ち上げるだけ
-      pourTransform = "translateY(-8px)";
-      pourTransformOrigin = "bottom center";
-    } else if (pourDirection === "up") {
-      // 真上：少し下に下がるだけ
-      pourTransform = "translateY(4px)";
-      pourTransformOrigin = "bottom center";
-    }
-  }
+function Bottle({
+  idx,
+  bottle,
+  hiddenArr,
+  isSelected,
+  pourable,
+  complete,
+  flashing,
+  pourAnim,
+  refFn,
+  onClick,
+}) {
+  const isSource = pourAnim && pourAnim.from === idx;
+  const isTarget = pourAnim && pourAnim.to === idx;
+  const len = bottle.length;
+  const topColor = len > 0 ? COLORS[bottle[len - 1]] : null;
+
+  const liftStyle =
+    isSource && !pourAnim.returning
+      ? { transform: `translate(${pourAnim.tx}px, ${pourAnim.ty}px) rotate(${pourAnim.rot}deg)` }
+      : undefined;
+
+  const liftCls = [
+    "lift",
+    isSelected ? "selected" : "",
+    isSource ? "pouring" : "",
+    complete ? "complete" : "",
+    flashing ? "flash" : "",
+    pourable ? "pourable" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <div
+      className="bottle"
+      ref={refFn}
       onClick={onClick}
-      style={{
-        position: "relative",
-        cursor: "pointer",
-        userSelect: "none",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        transform: isSelected ? "translateY(-12px)" : "translateY(0)",
-        transition: "transform 0.3s",
-      }}
+      data-testid={`bottle-${idx}`}
+      style={isSource ? { zIndex: 60 } : undefined}
     >
-      {/* 傾き用ラッパー */}
-      <div style={{
-        width: "100%",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        transformOrigin: pourTransformOrigin,
-        transform: pourTransform,
-        transition: isPouringFrom ? "transform 0.1s ease-out" : "transform 0.15s ease-in",
-        position: "relative",
-        zIndex: isPouringFrom ? 30 : 1,
-      }}>
-
-        {/* 首 */}
-        <div style={{
-          width: "38%",
-          height: 10,
-          background: "linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.08))",
-          borderRadius: "3px 3px 0 0",
-          border: "1.5px solid rgba(255,215,0,0.25)",
-          borderBottom: "none",
-        }} />
-
-        {/* 胴体（高さ固定） */}
-        <div style={{
-          width: "100%",
-          height: 140,
-          background: "linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 100%)",
-          borderRadius: "6px 6px 22px 22px",
-          border: `2px solid ${isSelected ? "rgba(255, 215, 0, 0.85)" : "rgba(255,255,255,0.25)"}`,
-          boxShadow: isSelected
-            ? "0 0 30px rgba(255, 215, 0, 0.5)"
-            : "0 6px 20px rgba(0,0,0,0.5)",
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column-reverse", // 下から積む
-          padding: "3px",
-          boxSizing: "border-box",
-          position: "relative",
-        }}>
-        {/* 4つのスロットを必ず作る（空も含めて） */}
-        {Array.from({ length: BOTTLE_CAPACITY }).map((_, slotIdx) => {
-          const colorIdx = bottle[slotIdx]; // 該当層の色（undefinedなら空）
-          const isFilled = colorIdx !== undefined;
-          const isHiddenLayer = isFilled && hidden[slotIdx];
-          const color = isFilled ? COLORS[colorIdx] : null;
-
-          return (
-            <div
-              key={slotIdx}
-              style={{
-                width: "100%",
-                height: `${100 / BOTTLE_CAPACITY}%`,
-                flex: `0 0 ${100 / BOTTLE_CAPACITY}%`,
-                background: !isFilled
-                  ? "transparent"
-                  : isHiddenLayer
-                    ? "linear-gradient(180deg, #3a2f6e, #1f1850)"
-                    : `linear-gradient(180deg, ${color.glow} 0%, ${color.value} 100%)`,
-                boxShadow: isFilled && !isHiddenLayer
-                  ? `inset 0 -3px 6px rgba(0,0,0,0.25), inset 0 2px 4px ${color.glow}99`
-                  : isHiddenLayer
-                    ? "inset 0 -3px 6px rgba(0,0,0,0.5)"
-                    : "none",
-                borderRadius: slotIdx === 0 ? "0 0 17px 17px" : "0",
-                position: "relative",
-                transition: "background 0.15s ease",
-              }}
-            >
-              {/* 上面ハイライト */}
-              {isFilled && !isHiddenLayer && (
-                <div style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 4,
-                  right: 4,
-                  height: 2,
-                  background: `linear-gradient(90deg, transparent, ${color.glow}, transparent)`,
-                  opacity: 0.7,
-                }} />
-              )}
-              {/* ?マーク */}
-              {isHiddenLayer && (
-                <div style={{
-                  position: "absolute",
-                  inset: 0,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "rgba(220, 200, 255, 0.7)",
-                  fontWeight: 700,
-                  fontSize: 18,
-                  fontFamily: "Georgia, serif",
-                }}>
-                  ?
-                </div>
+      <div className={liftCls} style={liftStyle}>
+        <div className="glass">
+          <div className="glass-body">
+            <div className="liquid">
+              {len === 0 && <div className="base-ellipse" />}
+              {bottle.map((colorIdx, slotIdx) => {
+                const isHidden = hiddenArr[slotIdx];
+                const c = COLORS[colorIdx];
+                const isNew =
+                  isTarget && pourAnim.prevToLen != null && slotIdx >= pourAnim.prevToLen;
+                return (
+                  <div
+                    key={slotIdx}
+                    className={`seg ${isHidden ? "hidden-seg" : ""} ${isNew ? "newfill" : ""}`}
+                    style={{
+                      bottom: `${slotIdx * UNIT_H}%`,
+                      background: isHidden
+                        ? "linear-gradient(180deg, #2c2450, #171034)"
+                        : `linear-gradient(180deg, ${c.glow} 0%, ${c.value} 45%, ${c.dark} 100%)`,
+                      boxShadow: isHidden
+                        ? "inset 0 2px 6px rgba(0,0,0,0.5)"
+                        : "inset 0 1px 1px rgba(255,255,255,0.3)",
+                      animationDelay: isNew
+                        ? `${(slotIdx - pourAnim.prevToLen) * 0.09}s`
+                        : undefined,
+                    }}
+                  >
+                    <div className="sym">{isHidden ? "?" : c.symbol}</div>
+                  </div>
+                );
+              })}
+              {len > 0 && (
+                <div
+                  className="surface"
+                  style={{
+                    bottom: `${len * UNIT_H}%`,
+                    background: `radial-gradient(ellipse at 50% 38%, ${topColor.glow}, ${topColor.value} 78%)`,
+                  }}
+                />
               )}
             </div>
-          );
-        })}
-
-        {/* ガラスのキラリ */}
-        <div style={{
-          position: "absolute",
-          top: 8,
-          left: 8,
-          width: 3,
-          height: "30%",
-          background: "linear-gradient(180deg, rgba(255,255,255,0.7), transparent)",
-          borderRadius: 999,
-          opacity: 0.8,
-          pointerEvents: "none",
-        }} />
+            <div className="edge-shade" />
+            <div className="gloss" />
+          </div>
+          <div className="rim" />
+          {complete && <div className="cork" />}
+          {flashing && <div className="seal-star">✦</div>}
+          {pourable && <div className="hint">▾</div>}
+        </div>
       </div>
-      </div>{/* 傾き用ラッパー終了 */}
-
-      {/* 影 */}
-      <div style={{
-        width: "70%",
-        height: 5,
-        marginTop: 4,
-        background: "radial-gradient(ellipse, rgba(0,0,0,0.6), transparent 70%)",
-        filter: "blur(3px)",
-      }} />
+      <div className="ground-shadow" />
     </div>
   );
 }
 
 // ============================================
-// 補助コンポーネント
+// 補助コンポーネント（純粋）
 // ============================================
-function Stat({ label, value }) {
-  return (
-    <div style={{ textAlign: "center" }}>
-      <div style={{
-        fontSize: 9,
-        letterSpacing: "0.3em",
-        color: "rgba(255,215,0,0.5)",
-        marginBottom: 2,
-        fontFamily: "Georgia, serif",
-      }}>
-        {label}
-      </div>
-      <div style={{
-        fontSize: 20,
-        fontWeight: 600,
-        color: "rgba(255,236,179,1)",
-        fontFamily: "Georgia, serif",
-      }}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function ControlButton({ onClick, disabled, icon, label }) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        flex: 1,
-        maxWidth: 96,
-        padding: "10px 0",
-        borderRadius: 16,
-        background: "linear-gradient(135deg, rgba(182, 109, 255, 0.18) 0%, rgba(76, 201, 240, 0.12) 100%)",
-        border: "1px solid rgba(255, 215, 0, 0.25)",
-        boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.25 : 1,
-        transition: "all 0.2s",
-      }}
-    >
-      <div style={{ fontSize: 20, color: "rgba(255,215,0,0.9)", lineHeight: 1, marginBottom: 4 }}>
-        {icon}
-      </div>
-      <div style={{
-        fontSize: 9,
-        letterSpacing: "0.2em",
-        color: "rgba(255,236,179,0.8)",
-        fontWeight: 600,
-        fontFamily: "Georgia, serif",
-      }}>
-        {label}
-      </div>
-    </button>
-  );
-}
-
 function Modal({ title, subtitle, children }) {
   return (
-    <div style={{
-      position: "fixed",
-      inset: 0,
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      zIndex: 50,
-      padding: "0 24px",
-      background: "rgba(5, 3, 20, 0.85)",
-      backdropFilter: "blur(8px)",
-    }}>
-      <div style={{
-        position: "relative",
-        maxWidth: 384,
-        width: "100%",
-        padding: 28,
-        borderRadius: 24,
-        textAlign: "center",
-        background: "linear-gradient(180deg, rgba(42, 31, 94, 0.96), rgba(15, 10, 50, 0.96))",
-        border: "1px solid rgba(255, 215, 0, 0.35)",
-        boxShadow: "0 0 60px rgba(182, 109, 255, 0.4)",
-      }}>
-        <div style={{
-          fontSize: 10,
-          letterSpacing: "0.5em",
-          color: "rgba(255,215,0,0.7)",
-          marginBottom: 8,
-          fontFamily: "Georgia, serif",
-        }}>
-          {subtitle}
-        </div>
-        <h2 style={{
-          fontSize: 30,
-          fontWeight: 700,
-          marginBottom: 20,
-          letterSpacing: "0.15em",
-          background: "linear-gradient(180deg, #ffd700, #f4a261)",
-          WebkitBackgroundClip: "text",
-          WebkitTextFillColor: "transparent",
-          fontFamily: "Georgia, serif",
-        }}>
-          ✦ {title} ✦
-        </h2>
+    <div className="modal-back">
+      <div className="modal">
+        <div className="modal-sub">{subtitle}</div>
+        <h2 className="modal-title">✦ {title} ✦</h2>
         {children}
       </div>
+    </div>
+  );
+}
+
+function Confetti() {
+  return (
+    <div style={{ position: "fixed", inset: 0, pointerEvents: "none", overflow: "hidden" }}>
+      {Array.from({ length: 26 }, (_, i) => (
+        <div
+          key={i}
+          className="confetti"
+          style={{
+            left: `${(i * 137) % 100}%`,
+            background: COLORS[i % COLORS.length].value,
+            animationDelay: `${(i % 9) * 0.13}s`,
+          }}
+        />
+      ))}
     </div>
   );
 }
