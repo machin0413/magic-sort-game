@@ -23,8 +23,9 @@ import { CSS } from "./styles.js";
 const UNIT_H = 23.5;
 
 // 注ぎアニメーションのタイミング（CSSのtransition/delayと同期）
-const T_MOVE = 280;
-const T_BACK = 240;
+// ゲーム状態はクリック即時に更新され、アニメーションは演出として後追いする
+const T_MOVE = 140;
+const T_BACK = 180;
 
 // 背景装飾はモジュール読み込み時に一度だけ生成
 const BG_STARS = Array.from({ length: 34 }, () => ({
@@ -63,7 +64,7 @@ export default function App() {
     );
   });
   const [game, setGame] = useState(() => freshGame(loadSave()?.level || 1));
-  const [pourAnim, setPourAnim] = useState(null);
+  const [anims, setAnims] = useState([]); // 進行中の注ぎ演出（複数同時可）
   const [flash, setFlash] = useState(null); // { idx, key }
   const [showLevels, setShowLevels] = useState(false);
 
@@ -74,8 +75,7 @@ export default function App() {
   const bottleRefs = useRef([]);
   const sceneRef = useRef(null);
   const boardRef = useRef(null);
-  const isProcessingRef = useRef(false);
-  const queuedClickRef = useRef(null);
+  const animSeq = useRef(0);
 
   useEffect(() => {
     setMuted(!save.sound);
@@ -113,13 +113,18 @@ export default function App() {
     persistSave(next);
   };
 
+  // gameRefを即時更新してからsetStateする。
+  // 描画を待たずに次のクリックを処理できるので、高速連打でも状態がずれない
+  const commitGame = (next) => {
+    gameRef.current = next;
+    setGame(next);
+  };
+
   const loadLevel = (lv) => {
-    isProcessingRef.current = false;
-    queuedClickRef.current = null;
-    setPourAnim(null);
+    setAnims([]);
     setFlash(null);
     setShowLevels(false);
-    setGame(freshGame(lv));
+    commitGame(freshGame(lv));
   };
 
   // ---------- 注ぎの3Dジオメトリ ----------
@@ -169,13 +174,13 @@ export default function App() {
         return;
       }
       sfx.select();
-      setGame({ ...cur, selected: idx });
+      commitGame({ ...cur, selected: idx });
       return;
     }
 
     if (cur.selected === idx) {
       sfx.deselect();
-      setGame({ ...cur, selected: null });
+      commitGame({ ...cur, selected: null });
       return;
     }
 
@@ -209,78 +214,73 @@ export default function App() {
         stars,
       };
 
-      const tPour = 240 + units * 150;
-      isProcessingRef.current = true;
+      // 状態はクリックした瞬間に確定させる（入力を一切ブロックしない）
       sfx.pour(units);
-      setPourAnim({
-        from: fromIdx,
-        to: toIdx,
-        colorIdx,
-        units,
-        prevToLen: curBottles[toIdx].length,
-        returning: false,
-        ...(geo || { tx: 0, ty: -30, rot: 40, stream: null }),
-      });
+      commitGame(newState);
+      if (justCompleted) {
+        setFlash({ idx: toIdx, key: Date.now() });
+        sfx.complete();
+      }
+      if (nowCleared) {
+        sfx.clear();
+        const s = saveRef.current;
+        const prevBest = s.best[cur.level] || 0;
+        updateSave({
+          level: Math.max(s.level, cur.level + 1),
+          totalStars: s.totalStars + Math.max(0, stars - prevBest),
+          clears: s.clears + 1,
+          best: { ...s.best, [cur.level]: Math.max(prevBest, stars) },
+        });
+      } else if (nowStuck) {
+        sfx.stuck();
+      }
 
+      // 演出は独立して後追いさせる（同じボトルの古い演出は即完了扱い）
+      const id = ++animSeq.current;
+      setAnims((prev) => [
+        ...prev.filter(
+          (a) => a.from !== fromIdx && a.to !== fromIdx && a.from !== toIdx && a.to !== toIdx
+        ),
+        {
+          id,
+          from: fromIdx,
+          to: toIdx,
+          colorIdx,
+          units,
+          prevToLen: curBottles[toIdx].length,
+          returning: false,
+          ...(geo || { tx: 0, ty: -30, rot: 40, stream: null }),
+        },
+      ]);
+      const holdMs = T_MOVE + 170 + units * 70;
       setTimeout(() => {
-        setGame(newState);
-        if (justCompleted) {
-          setFlash({ idx: toIdx, key: Date.now() });
-          sfx.complete();
-        }
-        if (nowCleared) {
-          sfx.clear();
-          const s = saveRef.current;
-          const prevBest = s.best[cur.level] || 0;
-          updateSave({
-            level: Math.max(s.level, cur.level + 1),
-            totalStars: s.totalStars + Math.max(0, stars - prevBest),
-            clears: s.clears + 1,
-            best: { ...s.best, [cur.level]: Math.max(prevBest, stars) },
-          });
-        } else if (nowStuck) {
-          sfx.stuck();
-        }
-      }, T_MOVE);
-
+        setAnims((prev) => prev.map((a) => (a.id === id ? { ...a, returning: true } : a)));
+      }, holdMs);
       setTimeout(() => {
-        setPourAnim((p) => (p ? { ...p, returning: true } : null));
-      }, T_MOVE + tPour);
-
-      setTimeout(() => {
-        setPourAnim(null);
-        isProcessingRef.current = false;
-        if (queuedClickRef.current !== null) {
-          const q = queuedClickRef.current;
-          queuedClickRef.current = null;
-          processClick(q, gameRef.current);
-        }
-      }, T_MOVE + tPour + T_BACK);
+        setAnims((prev) => prev.filter((a) => a.id !== id));
+      }, holdMs + T_BACK);
     } else {
       if (curBottles[idx].length > 0 && !isBottleComplete(curBottles[idx])) {
         sfx.select();
-        setGame({ ...cur, selected: idx });
+        commitGame({ ...cur, selected: idx });
       } else {
         sfx.deny();
-        setGame({ ...cur, selected: null });
+        commitGame({ ...cur, selected: null });
       }
     }
   };
 
   const handleBottleClick = (idx) => {
-    if (isProcessingRef.current) {
-      queuedClickRef.current = idx;
-      return;
-    }
     processClick(idx, gameRef.current);
   };
 
   const handleUndo = () => {
     const cur = gameRef.current;
-    if (cur.history.length === 0 || isProcessingRef.current) return;
+    if (cur.history.length === 0) return;
     sfx.undo();
+    setAnims([]);
     const last = cur.history[cur.history.length - 1];
-    setGame({
+    commitGame({
       ...cur,
       bottles: last.bottles,
       hidden: last.hidden,
@@ -298,9 +298,9 @@ export default function App() {
 
   const handleAddBottle = () => {
     const cur = gameRef.current;
-    if (cur.bottles.length >= MAX_BOTTLES || isProcessingRef.current) return;
+    if (cur.bottles.length >= MAX_BOTTLES) return;
     sfx.select();
-    setGame({
+    commitGame({
       ...cur,
       bottles: [...cur.bottles, []],
       hidden: [...cur.hidden, []],
@@ -333,8 +333,8 @@ export default function App() {
 
   // ---------- 描画 ----------
   const bwCalc = `min(72px, calc((min(100vw, 560px) - 32px - ${(maxRowLen - 1) * 10}px) / ${maxRowLen}))`;
-  const showClearModal = cleared && !pourAnim;
-  const showStuckModal = stuck && !cleared && !pourAnim;
+  const showClearModal = cleared && anims.length === 0;
+  const showStuckModal = stuck && !cleared && anims.length === 0;
 
   return (
     <div
@@ -408,51 +408,63 @@ export default function App() {
           <div className="board" ref={(el) => (boardRef.current = el)} style={{ "--bw": bwCalc }}>
             {rowsIdx.map((row, ri) => (
               <div key={ri} className={`row ${backCount && ri === 0 ? "back" : "front"}`}>
-                {row.map((idx) => (
-                  <Bottle
-                    key={idx}
-                    idx={idx}
-                    bottle={bottles[idx]}
-                    hiddenArr={hidden[idx] || []}
-                    isSelected={selected === idx}
-                    pourable={
-                      selected !== null &&
-                      selected !== idx &&
-                      !pourAnim &&
-                      canPour(bottles, selected, idx)
-                    }
-                    complete={isBottleComplete(bottles[idx])}
-                    flashing={flash && flash.idx === idx}
-                    pourAnim={pourAnim}
-                    refFn={(el) => (bottleRefs.current[idx] = el)}
-                    onClick={() => handleBottleClick(idx)}
-                  />
-                ))}
+                {row.map((idx) => {
+                  let srcAnim = null;
+                  let tgtAnim = null;
+                  for (const a of anims) {
+                    if (a.from === idx) srcAnim = a;
+                    if (a.to === idx && !a.returning) tgtAnim = a;
+                  }
+                  return (
+                    <Bottle
+                      key={idx}
+                      idx={idx}
+                      bottle={bottles[idx]}
+                      hiddenArr={hidden[idx] || []}
+                      isSelected={selected === idx}
+                      pourable={
+                        selected !== null && selected !== idx && canPour(bottles, selected, idx)
+                      }
+                      complete={isBottleComplete(bottles[idx])}
+                      flashing={flash && flash.idx === idx}
+                      srcAnim={srcAnim}
+                      tgtAnim={tgtAnim}
+                      refFn={(el) => (bottleRefs.current[idx] = el)}
+                      onClick={() => handleBottleClick(idx)}
+                    />
+                  );
+                })}
               </div>
             ))}
           </div>
 
-          {/* 注ぎストリーム（3D変形の外のオーバーレイ） */}
-          {pourAnim && !pourAnim.returning && pourAnim.stream && (
+          {/* 注ぎストリーム（3D変形の外のオーバーレイ・複数同時） */}
+          {anims.some((a) => !a.returning && a.stream) && (
             <div className="stream-layer" style={{ position: "fixed", inset: 0 }}>
-              <div
-                className="stream"
-                style={{
-                  left: pourAnim.stream.x - 3,
-                  top: pourAnim.stream.top,
-                  height: pourAnim.stream.h,
-                  "--pc": COLORS[pourAnim.colorIdx].value,
-                  background: `linear-gradient(180deg, ${COLORS[pourAnim.colorIdx].glow}, ${COLORS[pourAnim.colorIdx].value})`,
-                }}
-              />
-              <div
-                className="splash"
-                style={{
-                  left: pourAnim.stream.splashX - 13,
-                  top: pourAnim.stream.splashTop,
-                  "--pc": COLORS[pourAnim.colorIdx].glow,
-                }}
-              />
+              {anims
+                .filter((a) => !a.returning && a.stream)
+                .map((a) => (
+                  <React.Fragment key={a.id}>
+                    <div
+                      className="stream"
+                      style={{
+                        left: a.stream.x - 3,
+                        top: a.stream.top,
+                        height: a.stream.h,
+                        "--pc": COLORS[a.colorIdx].value,
+                        background: `linear-gradient(180deg, ${COLORS[a.colorIdx].glow}, ${COLORS[a.colorIdx].value})`,
+                      }}
+                    />
+                    <div
+                      className="splash"
+                      style={{
+                        left: a.stream.splashX - 13,
+                        top: a.stream.splashTop,
+                        "--pc": COLORS[a.colorIdx].glow,
+                      }}
+                    />
+                  </React.Fragment>
+                ))}
             </div>
           )}
         </div>
@@ -564,24 +576,24 @@ function Bottle({
   pourable,
   complete,
   flashing,
-  pourAnim,
+  srcAnim,
+  tgtAnim,
   refFn,
   onClick,
 }) {
-  const isSource = pourAnim && pourAnim.from === idx;
-  const isTarget = pourAnim && pourAnim.to === idx;
   const len = bottle.length;
   const topColor = len > 0 ? COLORS[bottle[len - 1]] : null;
 
   const liftStyle =
-    isSource && !pourAnim.returning
-      ? { transform: `translate(${pourAnim.tx}px, ${pourAnim.ty}px) rotate(${pourAnim.rot}deg)` }
+    srcAnim && !srcAnim.returning
+      ? { transform: `translate(${srcAnim.tx}px, ${srcAnim.ty}px) rotate(${srcAnim.rot}deg)` }
       : undefined;
 
   const liftCls = [
     "lift",
     isSelected ? "selected" : "",
-    isSource ? "pouring" : "",
+    srcAnim ? "pouring" : "",
+    srcAnim && srcAnim.returning ? "returning" : "",
     complete ? "complete" : "",
     flashing ? "flash" : "",
     pourable ? "pourable" : "",
@@ -595,7 +607,7 @@ function Bottle({
       ref={refFn}
       onClick={onClick}
       data-testid={`bottle-${idx}`}
-      style={isSource ? { zIndex: 60 } : undefined}
+      style={srcAnim ? { zIndex: 60 } : undefined}
     >
       <div className={liftCls} style={liftStyle}>
         <div className="glass">
@@ -605,8 +617,7 @@ function Bottle({
               {bottle.map((colorIdx, slotIdx) => {
                 const isHidden = hiddenArr[slotIdx];
                 const c = COLORS[colorIdx];
-                const isNew =
-                  isTarget && pourAnim.prevToLen != null && slotIdx >= pourAnim.prevToLen;
+                const isNew = tgtAnim && slotIdx >= tgtAnim.prevToLen;
                 return (
                   <div
                     key={slotIdx}
@@ -620,7 +631,7 @@ function Bottle({
                         ? "inset 0 2px 6px rgba(0,0,0,0.5)"
                         : "inset 0 1px 1px rgba(255,255,255,0.3)",
                       animationDelay: isNew
-                        ? `${(slotIdx - pourAnim.prevToLen) * 0.09}s`
+                        ? `${0.1 + (slotIdx - tgtAnim.prevToLen) * 0.06}s`
                         : undefined,
                     }}
                   >
