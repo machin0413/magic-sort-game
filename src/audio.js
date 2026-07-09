@@ -74,7 +74,7 @@ export const sfx = {
   select: safe(() => tone(660, { dur: 0.08, slide: 220, vol: 0.12 })),
   deselect: safe(() => tone(440, { dur: 0.07, slide: -120, vol: 0.08 })),
   deny: safe(() => tone(180, { dur: 0.12, type: "square", vol: 0.06 })),
-  pour: safe((units = 1) => noise({ dur: 0.22 + units * 0.12, from: 950, to: 300, vol: 0.11 })),
+  pour: safe((units = 1) => noise({ dur: 0.14 + units * 0.07, from: 1000, to: 320, vol: 0.11 })),
   complete: safe(() => {
     tone(659, { start: 0, dur: 0.12, type: "sine", vol: 0.16 });
     tone(988, { start: 0.09, dur: 0.2, type: "sine", vol: 0.16 });

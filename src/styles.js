@@ -177,11 +177,12 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
 }
 .lift {
   position: relative;
-  transition: transform 0.26s cubic-bezier(0.45, 0, 0.4, 1);
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
   transform: translate(0, 0) rotate(0deg);
 }
 .lift.selected { transform: translateY(calc(var(--bw) * -0.24)); }
-.lift.pouring { z-index: 60; transition: transform 0.26s cubic-bezier(0.5, 0, 0.45, 1); }
+.lift.pouring { z-index: 60; transition: transform 0.14s cubic-bezier(0.4, 0, 0.5, 1); }
+.lift.pouring.returning { transition: transform 0.18s cubic-bezier(0.3, 0, 0.55, 1); }
 
 .glass { position: relative; padding-top: calc(var(--bw) * 0.17); }
 
@@ -257,7 +258,7 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   align-items: center;
   justify-content: center;
 }
-.seg.newfill { animation: fillUp 0.3s ease-out both; }
+.seg.newfill { animation: fillUp 0.22s ease-out both; }
 @keyframes fillUp { from { height: 0%; } }
 
 .seg .sym {
@@ -279,7 +280,7 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   height: calc(var(--bw) * 0.26);
   transform: translateY(50%);
   border-radius: 50%;
-  transition: bottom 0.3s ease;
+  transition: bottom 0.18s ease;
   z-index: 4;
   box-shadow: inset 0 2px 5px rgba(255,255,255,0.35), inset 0 -2px 4px rgba(0,0,0,0.2);
 }
@@ -387,7 +388,7 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   margin: 5px auto 0;
   background: radial-gradient(ellipse, rgba(0,0,0,0.55), transparent 70%);
   filter: blur(3px);
-  transition: transform 0.26s ease, opacity 0.26s ease;
+  transition: transform 0.18s ease, opacity 0.18s ease;
 }
 .selected + .ground-shadow, .pouring + .ground-shadow { opacity: 0.35; transform: scale(0.82); }
 
@@ -403,7 +404,7 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   width: 7px;
   border-radius: 4px;
   transform-origin: top center;
-  animation: streamIn 0.2s ease-out 0.26s both;
+  animation: streamIn 0.13s ease-out 0.12s both;
   box-shadow: 0 0 10px var(--pc), 0 0 22px var(--pc);
 }
 @keyframes streamIn {
@@ -418,7 +419,7 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   border-radius: 50%;
   border: 2px solid var(--pc);
   opacity: 0;
-  animation: splashRing 0.5s ease-out 0.4s infinite;
+  animation: splashRing 0.4s ease-out 0.2s infinite;
 }
 @keyframes splashRing {
   0% { transform: scale(0.3); opacity: 0.9; }
