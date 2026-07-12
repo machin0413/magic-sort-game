@@ -168,6 +168,7 @@ export function loadSave() {
     return {
       level: Math.floor(s.level),
       sound: s.sound !== false,
+      runes: s.runes !== false,
       totalStars: s.totalStars || 0,
       clears: s.clears || 0,
       best: s.best || {},

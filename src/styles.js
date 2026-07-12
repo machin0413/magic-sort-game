@@ -392,9 +392,35 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
 }
 .selected + .ground-shadow, .pouring + .ground-shadow { opacity: 0.35; transform: scale(0.82); }
 
+/* ---------- 注ぎ中ボトルのクローン（画面座標オーバーレイ） ---------- */
+.clone-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+}
+.clone {
+  position: absolute;
+  transform-origin: 50% calc(var(--bw) * 1.11);
+  animation: cloneOut 0.14s cubic-bezier(0.4, 0, 0.5, 1) both;
+  filter: drop-shadow(0 10px 14px rgba(0,0,0,0.35));
+}
+.clone.returning {
+  animation: cloneBack 0.18s cubic-bezier(0.3, 0, 0.55, 1) both;
+}
+@keyframes cloneOut {
+  from { transform: translate(0, calc(var(--bw) * -0.24)) rotate(0deg); }
+  to { transform: translate(var(--cx), var(--cy)) rotate(var(--crot)); }
+}
+@keyframes cloneBack {
+  from { transform: translate(var(--cx), var(--cy)) rotate(var(--crot)); }
+  to { transform: translate(0, 0) rotate(0deg); }
+}
+.clone .glass-body { box-shadow: none; }
+
 /* ---------- 注ぎストリーム ---------- */
 .stream-layer {
-  position: absolute;
+  position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 55;
@@ -430,7 +456,7 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
 .controls {
   display: flex;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   margin-top: 10px;
 }
 .ctrl {
@@ -439,7 +465,7 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   align-items: center;
   justify-content: center;
   flex: 1;
-  max-width: 86px;
+  max-width: 78px;
   padding: 9px 0 7px;
   border-radius: 14px;
   background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.04) 100%);

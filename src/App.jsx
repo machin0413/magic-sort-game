@@ -41,6 +41,12 @@ const BG_RISE = Array.from({ length: 9 }, () => ({
   dur: 7 + Math.random() * 6,
 }));
 
+// タッチ端末では視差を切る（タップのたびに盤面が動いて注ぎ座標がずれるため）
+const FINE_POINTER =
+  typeof window !== "undefined" &&
+  !!window.matchMedia &&
+  window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+
 function freshGame(level) {
   const stage = generateStage(level);
   return {
@@ -60,7 +66,14 @@ function freshGame(level) {
 export default function App() {
   const [save, setSave] = useState(() => {
     return (
-      loadSave() || { level: 1, sound: true, totalStars: 0, clears: 0, best: {} }
+      loadSave() || {
+        level: 1,
+        sound: true,
+        runes: true,
+        totalStars: 0,
+        clears: 0,
+        best: {},
+      }
     );
   });
   const [game, setGame] = useState(() => freshGame(loadSave()?.level || 1));
@@ -72,6 +85,8 @@ export default function App() {
   gameRef.current = game;
   const saveRef = useRef(save);
   saveRef.current = save;
+  const animsRef = useRef(anims);
+  animsRef.current = anims;
   const bottleRefs = useRef([]);
   const sceneRef = useRef(null);
   const boardRef = useRef(null);
@@ -86,6 +101,9 @@ export default function App() {
     window.__ms = {
       get game() {
         return gameRef.current;
+      },
+      get anims() {
+        return animsRef.current;
       },
       click: (i) => handleBottleClick(i),
       load: (lv) => loadLevel(lv),
@@ -127,38 +145,38 @@ export default function App() {
     commitGame(freshGame(lv));
   };
 
-  // ---------- 注ぎの3Dジオメトリ ----------
+  // ---------- 注ぎのジオメトリ ----------
+  // 注ぎ中のボトルは3D盤面から切り離した画面座標のクローンとして飛ばすので、
+  // getBoundingClientRect（射影済みの実座標）だけで厳密に位置合わせできる
   const computePourGeometry = (fromIdx, toIdx) => {
-    const sceneEl = sceneRef.current;
     const sEl = bottleRefs.current[fromIdx];
     const tEl = bottleRefs.current[toIdx];
-    if (!sceneEl || !sEl || !tEl) return null;
-    const wrap = sceneEl.getBoundingClientRect();
+    if (!sEl || !tEl) return null;
     const s = sEl.getBoundingClientRect();
     const t = tEl.getBoundingClientRect();
-    const bw = s.width;
-    const sCx = s.left + s.width / 2;
-    const tCx = t.left + t.width / 2;
+    const bwS = s.width;
+    const bwT = t.width;
+    const sCx = s.left + bwS / 2;
+    const tCx = t.left + bwT / 2;
     const side = tCx >= sCx ? 1 : -1;
-    // 回転後にボトルの口が注ぎ先リムの真上へ来る位置を逆算（回転72°前提）
-    const desiredCx = tCx - side * 0.894 * bw;
-    const desiredCy = t.top - 0.09 * bw;
-    const srcCenterY = s.top + 1.11 * bw;
-    // 奥の列はperspectiveで縮小表示されるため移動量を補正
-    const backScale = fromIdx < backCount ? 1.085 : 1;
-    const tx = (desiredCx - sCx) * backScale;
-    const ty = (desiredCy - srcCenterY) * backScale;
-    const tgtRimY = t.top + 0.17 * bw;
+    const tgtRimY = t.top + 0.17 * bwT; // 注ぎ先リム中心
+    const mouthX = tCx; // 口をリムの真上に置く
+    const mouthY = tgtRimY - 0.52 * bwT;
+    // ボトル中心（transform-origin）から見た回転72°後の口のオフセットを逆算
+    const restCy = s.top + 1.11 * bwS;
     return {
-      tx,
-      ty,
+      bw: bwS,
+      left: s.left,
+      top: s.top,
+      cx: mouthX - side * 0.894 * bwS - sCx,
+      cy: mouthY + 0.29 * bwS - restCy,
       rot: side * 72,
       stream: {
-        x: tCx - wrap.left,
-        top: tgtRimY - 0.55 * bw - wrap.top,
-        h: 0.55 * bw,
-        splashTop: tgtRimY - wrap.top - 5,
-        splashX: tCx - wrap.left,
+        x: mouthX,
+        top: mouthY,
+        h: tgtRimY - mouthY,
+        splashTop: tgtRimY - 5,
+        splashX: tCx,
       },
     };
   };
@@ -248,8 +266,10 @@ export default function App() {
           colorIdx,
           units,
           prevToLen: curBottles[toIdx].length,
+          srcContents: [...curBottles[fromIdx]],
+          srcHidden: [...cur.hidden[fromIdx]],
           returning: false,
-          ...(geo || { tx: 0, ty: -30, rot: 40, stream: null }),
+          ...(geo || { bw: null, stream: null }),
         },
       ]);
       const holdMs = T_MOVE + 170 + units * 70;
@@ -313,9 +333,12 @@ export default function App() {
   };
 
   const toggleSound = () => updateSave({ sound: !saveRef.current.sound });
+  const toggleRunes = () => updateSave({ runes: !saveRef.current.runes });
 
   // ---------- 視差（ポインタ追従・stateを介さず直接CSS変数を更新） ----------
   const handleParallax = (e) => {
+    // タッチ端末では無効。注ぎ演出中も盤面を動かさない（クローンとの位置ずれ防止）
+    if (!FINE_POINTER || animsRef.current.length > 0) return;
     const el = boardRef.current;
     if (!el || !sceneRef.current) return;
     const r = sceneRef.current.getBoundingClientRect();
@@ -429,6 +452,7 @@ export default function App() {
                       flashing={flash && flash.idx === idx}
                       srcAnim={srcAnim}
                       tgtAnim={tgtAnim}
+                      showRunes={save.runes}
                       refFn={(el) => (bottleRefs.current[idx] = el)}
                       onClick={() => handleBottleClick(idx)}
                     />
@@ -438,35 +462,6 @@ export default function App() {
             ))}
           </div>
 
-          {/* 注ぎストリーム（3D変形の外のオーバーレイ・複数同時） */}
-          {anims.some((a) => !a.returning && a.stream) && (
-            <div className="stream-layer" style={{ position: "fixed", inset: 0 }}>
-              {anims
-                .filter((a) => !a.returning && a.stream)
-                .map((a) => (
-                  <React.Fragment key={a.id}>
-                    <div
-                      className="stream"
-                      style={{
-                        left: a.stream.x - 3,
-                        top: a.stream.top,
-                        height: a.stream.h,
-                        "--pc": COLORS[a.colorIdx].value,
-                        background: `linear-gradient(180deg, ${COLORS[a.colorIdx].glow}, ${COLORS[a.colorIdx].value})`,
-                      }}
-                    />
-                    <div
-                      className="splash"
-                      style={{
-                        left: a.stream.splashX - 13,
-                        top: a.stream.splashTop,
-                        "--pc": COLORS[a.colorIdx].glow,
-                      }}
-                    />
-                  </React.Fragment>
-                ))}
-            </div>
-          )}
         </div>
 
         <div className="controls">
@@ -486,12 +481,61 @@ export default function App() {
             <div className="ctrl-icon">▦</div>
             <div className="ctrl-label">LEVELS</div>
           </button>
+          <button className="ctrl" onClick={toggleRunes}>
+            <div className="ctrl-icon" style={{ opacity: save.runes ? 1 : 0.45 }}>
+              {save.runes ? "❖" : "◇"}
+            </div>
+            <div className="ctrl-label">RUNES</div>
+          </button>
           <button className="ctrl" onClick={toggleSound}>
             <div className="ctrl-icon">{save.sound ? "♪" : "∅"}</div>
             <div className="ctrl-label">{save.sound ? "SOUND" : "MUTED"}</div>
           </button>
         </div>
       </div>
+
+      {/* 注ぎ演出のオーバーレイ。
+          perspective/transform を持つ要素の内側に置くと position:fixed の基準が
+          ビューポートでなくなるため、必ず .scene 直下に置くこと */}
+      {anims.some((a) => !a.returning && a.stream) && (
+        <div className="stream-layer">
+          {anims
+            .filter((a) => !a.returning && a.stream)
+            .map((a) => (
+              <React.Fragment key={a.id}>
+                <div
+                  className="stream"
+                  style={{
+                    left: a.stream.x - 3,
+                    top: a.stream.top,
+                    height: a.stream.h,
+                    "--pc": COLORS[a.colorIdx].value,
+                    background: `linear-gradient(180deg, ${COLORS[a.colorIdx].glow}, ${COLORS[a.colorIdx].value})`,
+                  }}
+                />
+                <div
+                  className="splash"
+                  style={{
+                    left: a.stream.splashX - 13,
+                    top: a.stream.splashTop,
+                    "--pc": COLORS[a.colorIdx].glow,
+                  }}
+                />
+              </React.Fragment>
+            ))}
+        </div>
+      )}
+
+      {/* 注ぎ中のボトル本体（画面座標で正確に飛ばすクローン） */}
+      {anims.some((a) => a.bw != null) && (
+        <div className="clone-layer">
+          {anims
+            .filter((a) => a.bw != null)
+            .map((a) => (
+              <BottleClone key={a.id} anim={a} showRunes={save.runes} />
+            ))}
+        </div>
+      )}
 
       {/* クリアモーダル */}
       {showClearModal && (
@@ -568,6 +612,53 @@ export default function App() {
 // ============================================
 // ボトル（純粋コンポーネント・フックなし）
 // ============================================
+// 液体の積層（ボトル本体とクローンで共用）
+function LiquidStack({ bottle, hiddenArr, showRunes, tgtAnim }) {
+  const len = bottle.length;
+  const topColor = len > 0 ? COLORS[bottle[len - 1]] : null;
+  return (
+    <div className="liquid">
+      {len === 0 && <div className="base-ellipse" />}
+      {bottle.map((colorIdx, slotIdx) => {
+        const isHidden = hiddenArr[slotIdx];
+        const c = COLORS[colorIdx];
+        const isNew = tgtAnim && slotIdx >= tgtAnim.prevToLen;
+        return (
+          <div
+            key={slotIdx}
+            className={`seg ${isHidden ? "hidden-seg" : ""} ${isNew ? "newfill" : ""}`}
+            style={{
+              bottom: `${slotIdx * UNIT_H}%`,
+              background: isHidden
+                ? "linear-gradient(180deg, #2c2450, #171034)"
+                : `linear-gradient(180deg, ${c.glow} 0%, ${c.value} 45%, ${c.dark} 100%)`,
+              boxShadow: isHidden
+                ? "inset 0 2px 6px rgba(0,0,0,0.5)"
+                : "inset 0 1px 1px rgba(255,255,255,0.3)",
+              animationDelay: isNew
+                ? `${0.1 + (slotIdx - tgtAnim.prevToLen) * 0.06}s`
+                : undefined,
+            }}
+          >
+            {(isHidden || showRunes) && (
+              <div className="sym">{isHidden ? "?" : c.symbol}</div>
+            )}
+          </div>
+        );
+      })}
+      {len > 0 && (
+        <div
+          className="surface"
+          style={{
+            bottom: `${len * UNIT_H}%`,
+            background: `radial-gradient(ellipse at 50% 38%, ${topColor.glow}, ${topColor.value} 78%)`,
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 function Bottle({
   idx,
   bottle,
@@ -578,22 +669,17 @@ function Bottle({
   flashing,
   srcAnim,
   tgtAnim,
+  showRunes,
   refFn,
   onClick,
 }) {
-  const len = bottle.length;
-  const topColor = len > 0 ? COLORS[bottle[len - 1]] : null;
-
-  const liftStyle =
-    srcAnim && !srcAnim.returning
-      ? { transform: `translate(${srcAnim.tx}px, ${srcAnim.ty}px) rotate(${srcAnim.rot}deg)` }
-      : undefined;
+  // 注ぎ中は画面座標のクローンが本体の代わりに飛ぶので、実体は隠す
+  const cloneFlying = srcAnim && srcAnim.bw != null;
 
   const liftCls = [
     "lift",
     isSelected ? "selected" : "",
     srcAnim ? "pouring" : "",
-    srcAnim && srcAnim.returning ? "returning" : "",
     complete ? "complete" : "",
     flashing ? "flash" : "",
     pourable ? "pourable" : "",
@@ -602,53 +688,16 @@ function Bottle({
     .join(" ");
 
   return (
-    <div
-      className="bottle"
-      ref={refFn}
-      onClick={onClick}
-      data-testid={`bottle-${idx}`}
-      style={srcAnim ? { zIndex: 60 } : undefined}
-    >
-      <div className={liftCls} style={liftStyle}>
+    <div className="bottle" ref={refFn} onClick={onClick} data-testid={`bottle-${idx}`}>
+      <div className={liftCls} style={cloneFlying ? { visibility: "hidden" } : undefined}>
         <div className="glass">
           <div className="glass-body">
-            <div className="liquid">
-              {len === 0 && <div className="base-ellipse" />}
-              {bottle.map((colorIdx, slotIdx) => {
-                const isHidden = hiddenArr[slotIdx];
-                const c = COLORS[colorIdx];
-                const isNew = tgtAnim && slotIdx >= tgtAnim.prevToLen;
-                return (
-                  <div
-                    key={slotIdx}
-                    className={`seg ${isHidden ? "hidden-seg" : ""} ${isNew ? "newfill" : ""}`}
-                    style={{
-                      bottom: `${slotIdx * UNIT_H}%`,
-                      background: isHidden
-                        ? "linear-gradient(180deg, #2c2450, #171034)"
-                        : `linear-gradient(180deg, ${c.glow} 0%, ${c.value} 45%, ${c.dark} 100%)`,
-                      boxShadow: isHidden
-                        ? "inset 0 2px 6px rgba(0,0,0,0.5)"
-                        : "inset 0 1px 1px rgba(255,255,255,0.3)",
-                      animationDelay: isNew
-                        ? `${0.1 + (slotIdx - tgtAnim.prevToLen) * 0.06}s`
-                        : undefined,
-                    }}
-                  >
-                    <div className="sym">{isHidden ? "?" : c.symbol}</div>
-                  </div>
-                );
-              })}
-              {len > 0 && (
-                <div
-                  className="surface"
-                  style={{
-                    bottom: `${len * UNIT_H}%`,
-                    background: `radial-gradient(ellipse at 50% 38%, ${topColor.glow}, ${topColor.value} 78%)`,
-                  }}
-                />
-              )}
-            </div>
+            <LiquidStack
+              bottle={bottle}
+              hiddenArr={hiddenArr}
+              showRunes={showRunes}
+              tgtAnim={tgtAnim}
+            />
             <div className="edge-shade" />
             <div className="gloss" />
           </div>
@@ -659,6 +708,42 @@ function Bottle({
         </div>
       </div>
       <div className="ground-shadow" />
+    </div>
+  );
+}
+
+// 注ぎ中のボトルの分身。3D盤面の外（画面座標）で飛ばすことで
+// 視差や遠近法の影響を受けず、注ぎ先の口へ正確に位置合わせできる
+function BottleClone({ anim, showRunes }) {
+  const contents = anim.returning
+    ? anim.srcContents.slice(0, anim.srcContents.length - anim.units)
+    : anim.srcContents;
+  return (
+    <div
+      className={`clone ${anim.returning ? "returning" : ""}`}
+      style={{
+        left: anim.left,
+        top: anim.top,
+        width: anim.bw,
+        "--bw": `${anim.bw}px`,
+        "--cx": `${anim.cx}px`,
+        "--cy": `${anim.cy}px`,
+        "--crot": `${anim.rot}deg`,
+      }}
+    >
+      <div className="glass">
+        <div className="glass-body">
+          <LiquidStack
+            bottle={contents}
+            hiddenArr={anim.srcHidden}
+            showRunes={showRunes}
+            tgtAnim={null}
+          />
+          <div className="edge-shade" />
+          <div className="gloss" />
+        </div>
+        <div className="rim" />
+      </div>
     </div>
   );
 }
