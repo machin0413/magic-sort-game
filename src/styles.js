@@ -1,7 +1,12 @@
 // ============================================
 // スタイルシート
-// ボトルはCSS 3D（perspective + 楕円リム + 円柱シェーディング）で立体表現
-// サイズはすべて --bw（ボトル幅）基準の相対値 → 画面幅に自動追従
+// 快適動作を最優先にした軽量版：
+//  - filter / backdrop-filter（ぼかし）は不使用（モバイルSafariで高負荷）
+//  - 3D合成レイヤー（perspective / preserve-3d / translateZ）は不使用。
+//    奥行きは scale と重なりで表現
+//  - 常時動き続けるアニメーションは置かない。動くのは操作への反応だけ
+//  - アニメーションは transform / opacity のみ（レイアウトを揺らさない）
+// ボトルの立体感はグラデーション（楕円リム・液面・円柱シェード）で表現＝描画1回きりで軽い
 // ============================================
 export const CSS = `
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -14,59 +19,19 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   position: relative;
   overflow: hidden;
   background:
+    radial-gradient(ellipse at 50% 85%, var(--mist), transparent 60%),
     radial-gradient(ellipse at 50% -10%, var(--sky0) 0%, var(--sky1) 45%, var(--sky2) 100%);
   user-select: none;
+  -webkit-user-select: none;
   touch-action: manipulation;
-  transition: background 1.2s ease;
 }
 
-/* ---------- 背景装飾 ---------- */
-.bg-orb {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(46px);
-  opacity: 0.55;
-  pointer-events: none;
-  animation: orbDrift 16s ease-in-out infinite alternate;
-}
-.bg-mist {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(ellipse at 50% 80%, var(--mist), transparent 65%);
-}
+/* 背景の星（静止・装飾はこれだけ） */
 .star {
   position: absolute;
-  width: 3px;
-  height: 3px;
   border-radius: 50%;
-  background: #fff;
+  background: rgba(255,255,255,0.55);
   pointer-events: none;
-  animation: twinkle 3.2s ease-in-out infinite;
-}
-@keyframes twinkle {
-  0%, 100% { opacity: 0.15; transform: scale(0.7); }
-  50% { opacity: 0.9; transform: scale(1.15); }
-}
-@keyframes orbDrift {
-  from { transform: translate(0, 0) scale(1); }
-  to { transform: translate(30px, -40px) scale(1.15); }
-}
-.rise {
-  position: absolute;
-  bottom: -12px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-  opacity: 0;
-  pointer-events: none;
-  animation: riseUp linear infinite;
-}
-@keyframes riseUp {
-  0% { transform: translateY(0) scale(1); opacity: 0; }
-  12% { opacity: 0.5; }
-  100% { transform: translateY(-92vh) scale(0.3); opacity: 0; }
 }
 
 /* ---------- レイアウト ---------- */
@@ -98,7 +63,6 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   -webkit-text-fill-color: transparent;
   margin: 0;
   font-family: Georgia, serif;
-  filter: drop-shadow(0 2px 10px rgba(0,0,0,0.4));
 }
 .theme-name {
   font-size: 10px;
@@ -114,9 +78,8 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   margin: 8px 0 4px;
   padding: 8px 14px;
   border-radius: 16px;
-  background: rgba(255,255,255,0.05);
+  background: rgba(255,255,255,0.06);
   border: 1px solid rgba(255,255,255,0.1);
-  backdrop-filter: blur(6px);
 }
 .stat { text-align: center; min-width: 64px; }
 .stat-label {
@@ -136,37 +99,30 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
 .stat-value small { font-size: 11px; opacity: 0.55; font-weight: 400; }
 .stat-sep { width: 1px; height: 30px; background: rgba(255,255,255,0.12); }
 
-/* ---------- 3Dボード ---------- */
+/* ---------- ボード（フラット合成・奥行きはscaleで表現） ---------- */
 .board-wrap {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  perspective: 1100px;
   position: relative;
   padding: 18px 0 6px;
   min-height: 0;
 }
 .board {
-  transform-style: preserve-3d;
-  transform: rotateX(calc(7deg + var(--ty, 0deg))) rotateY(var(--tx, 0deg));
-  transition: transform 0.25s ease-out;
   width: 100%;
-  /* 3D変換された面がヒットテストを奪うため、クリックはボトルだけが受ける */
   pointer-events: none;
 }
 .row {
   display: flex;
   justify-content: center;
   gap: 10px;
-  transform-style: preserve-3d;
+}
+.row.back {
+  transform: scale(0.92);
+  margin-bottom: calc(var(--bw) * 0.42);
 }
 .bottle { pointer-events: auto; }
-.row.back {
-  transform: translateZ(calc(var(--bw) * -1.3)) translateY(calc(var(--bw) * -0.1));
-  margin-bottom: calc(var(--bw) * 0.55);
-}
-.row.back .bottle { filter: brightness(0.88); }
 
 /* ---------- ボトル ---------- */
 .bottle {
@@ -178,11 +134,10 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
 .lift {
   position: relative;
   transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
-  transform: translate(0, 0) rotate(0deg);
+  transform: translate(0, 0);
 }
 .lift.selected { transform: translateY(calc(var(--bw) * -0.24)); }
-.lift.pouring { z-index: 60; transition: transform 0.14s cubic-bezier(0.4, 0, 0.5, 1); }
-.lift.pouring.returning { transition: transform 0.18s cubic-bezier(0.3, 0, 0.55, 1); }
+.lift.pouring { z-index: 60; }
 
 .glass { position: relative; padding-top: calc(var(--bw) * 0.17); }
 
@@ -199,16 +154,14 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
     rgba(255,255,255,0.00) 50%, rgba(255,255,255,0.04) 80%,
     rgba(255,255,255,0.16) 100%);
   overflow: hidden;
-  box-shadow: 0 10px 24px rgba(0,0,0,0.45);
-  transition: box-shadow 0.25s ease, border-color 0.25s ease;
+  box-shadow: 0 6px 12px rgba(0,0,0,0.35);
 }
 .selected .glass-body {
   border-color: rgba(255,224,130,0.9);
-  box-shadow: 0 0 26px rgba(255,214,90,0.55), 0 10px 24px rgba(0,0,0,0.45);
+  box-shadow: 0 0 18px rgba(255,214,90,0.5);
 }
 .pourable .glass-body {
   border-color: var(--accent);
-  box-shadow: 0 0 16px var(--mist), 0 10px 24px rgba(0,0,0,0.45);
 }
 .complete .glass-body {
   border-color: rgba(255,215,0,0.55);
@@ -233,7 +186,7 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   width: 7%;
   height: 62%;
   z-index: 6;
-  background: linear-gradient(180deg, rgba(255,255,255,0.65), rgba(255,255,255,0.05) 80%, transparent);
+  background: linear-gradient(180deg, rgba(255,255,255,0.6), rgba(255,255,255,0.05) 80%, transparent);
   border-radius: 999px;
   pointer-events: none;
 }
@@ -258,17 +211,17 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   align-items: center;
   justify-content: center;
 }
-.seg.newfill { animation: fillUp 0.22s ease-out both; }
-@keyframes fillUp { from { height: 0%; } }
+/* 流入はopacity+transformのみ（レイアウトを動かさない） */
+.seg.newfill { animation: fillUp 0.2s ease-out both; }
+@keyframes fillUp {
+  from { opacity: 0; transform: translateY(30%); }
+}
 
 .seg .sym {
   font-size: calc(var(--bw) * 0.30);
   line-height: 1;
-  color: rgba(255,255,255,0.88);
-  text-shadow:
-    0 1px 1px rgba(0,0,0,0.55), 0 -1px 1px rgba(0,0,0,0.35),
-    1px 0 1px rgba(0,0,0,0.45), -1px 0 1px rgba(0,0,0,0.45);
-  opacity: 0.9;
+  color: rgba(255,255,255,0.9);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.65);
 }
 .seg.hidden-seg .sym { color: rgba(220,205,255,0.85); font-size: calc(var(--bw) * 0.34); }
 
@@ -280,7 +233,6 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   height: calc(var(--bw) * 0.26);
   transform: translateY(50%);
   border-radius: 50%;
-  transition: bottom 0.18s ease;
   z-index: 4;
   box-shadow: inset 0 2px 5px rgba(255,255,255,0.35), inset 0 -2px 4px rgba(0,0,0,0.2);
 }
@@ -294,7 +246,6 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   height: calc(var(--bw) * 0.2);
   border-radius: 50%;
   background: rgba(255,255,255,0.05);
-  box-shadow: inset 0 2px 4px rgba(255,255,255,0.08);
 }
 
 /* ---------- リム（口の楕円） ---------- */
@@ -308,7 +259,7 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   border: 2px solid rgba(255,255,255,0.5);
   background: linear-gradient(180deg, rgba(10,8,34,0.72), rgba(30,26,70,0.35));
   z-index: 8;
-  box-shadow: inset 0 3px 6px rgba(0,0,0,0.5), 0 1px 3px rgba(255,255,255,0.18);
+  box-shadow: inset 0 3px 6px rgba(0,0,0,0.5);
 }
 .selected .rim { border-color: rgba(255,224,130,0.95); }
 
@@ -321,7 +272,6 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   text-align: center;
   font-size: calc(var(--bw) * 0.36);
   color: var(--accent);
-  text-shadow: 0 0 8px var(--accent);
   animation: hintBob 0.7s ease-in-out infinite alternate;
   pointer-events: none;
   z-index: 9;
@@ -340,9 +290,9 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   height: calc(var(--bw) * 0.3);
   border-radius: 5px 5px 3px 3px;
   background: linear-gradient(180deg, #d9a066, #9c6b3c 70%, #7a4f28);
-  box-shadow: 0 2px 5px rgba(0,0,0,0.5), inset 0 1px 2px rgba(255,255,255,0.35);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.4);
   z-index: 10;
-  animation: corkIn 0.35s cubic-bezier(0.3, 1.6, 0.5, 1) both;
+  animation: corkIn 0.3s cubic-bezier(0.3, 1.6, 0.5, 1) both;
 }
 @keyframes corkIn {
   from { transform: translateY(-14px) scale(0.6); opacity: 0; }
@@ -355,9 +305,8 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   text-align: center;
   font-size: calc(var(--bw) * 0.4);
   color: #ffe27a;
-  text-shadow: 0 0 12px rgba(255,214,90,0.9);
   z-index: 10;
-  animation: sealPop 0.9s ease-out both;
+  animation: sealPop 0.8s ease-out both;
   pointer-events: none;
 }
 @keyframes sealPop {
@@ -365,32 +314,31 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   40% { transform: scale(1.5) rotate(10deg); opacity: 1; }
   100% { transform: scale(1) rotate(0deg); opacity: 0.9; }
 }
-.complete .glass-body::after {
-  content: "";
+.flash .seal-flash {
   position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(255,224,130,0.10), transparent 40%);
+  inset: -4px;
+  border-radius: inherit;
+  z-index: 9;
+  border: 3px solid rgba(255,224,130,0.9);
+  border-radius: 12px;
+  animation: flashRing 0.7s ease-out both;
   pointer-events: none;
 }
-.flash .glass-body {
-  animation: flashGlow 0.9s ease-out;
-}
-@keyframes flashGlow {
-  0% { box-shadow: 0 0 0 rgba(255,224,130,0); }
-  30% { box-shadow: 0 0 38px rgba(255,224,130,0.95); }
-  100% { box-shadow: 0 10px 24px rgba(0,0,0,0.45); }
+@keyframes flashRing {
+  0% { opacity: 0; transform: scale(0.9); }
+  30% { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.12); }
 }
 
-/* 接地影 */
+/* 接地影（ぼかし不使用・グラデーションのみ） */
 .ground-shadow {
   width: 74%;
   height: calc(var(--bw) * 0.13);
   margin: 5px auto 0;
-  background: radial-gradient(ellipse, rgba(0,0,0,0.55), transparent 70%);
-  filter: blur(3px);
-  transition: transform 0.18s ease, opacity 0.18s ease;
+  background: radial-gradient(ellipse, rgba(0,0,0,0.5), transparent 68%);
+  transition: opacity 0.18s ease;
 }
-.selected + .ground-shadow, .pouring + .ground-shadow { opacity: 0.35; transform: scale(0.82); }
+.selected + .ground-shadow, .pouring + .ground-shadow { opacity: 0.35; }
 
 /* ---------- 注ぎ中ボトルのクローン（画面座標オーバーレイ） ---------- */
 .clone-layer {
@@ -399,13 +347,10 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   pointer-events: none;
   z-index: 60;
 }
-/* 飛行はインラインstyleのtransformをtransitionで動かす。
-   @keyframes内のCSS変数はSafariで解決されないことがあるため使わない */
 .clone {
   position: absolute;
   transform-origin: 50% calc(var(--bw) * 1.11);
   will-change: transform;
-  filter: drop-shadow(0 10px 14px rgba(0,0,0,0.35));
 }
 .clone .glass-body { box-shadow: none; }
 
@@ -422,7 +367,6 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   border-radius: 4px;
   transform-origin: top center;
   animation: streamIn 0.13s ease-out 0.17s both;
-  box-shadow: 0 0 10px var(--pc), 0 0 22px var(--pc);
 }
 @keyframes streamIn {
   0% { transform: scaleY(0); opacity: 0; }
@@ -459,9 +403,8 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   max-width: 78px;
   padding: 9px 0 7px;
   border-radius: 14px;
-  background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.04) 100%);
+  background: rgba(255,255,255,0.07);
   border: 1px solid rgba(255,255,255,0.16);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
   cursor: pointer;
   color: inherit;
   transition: transform 0.15s ease, opacity 0.2s ease;
@@ -486,9 +429,8 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   justify-content: center;
   z-index: 100;
   padding: 0 24px;
-  background: rgba(5,3,20,0.82);
-  backdrop-filter: blur(9px);
-  animation: fadeIn 0.3s ease both;
+  background: rgba(5,3,20,0.9);
+  animation: fadeIn 0.25s ease both;
 }
 @keyframes fadeIn { from { opacity: 0; } }
 .modal {
@@ -500,12 +442,11 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   padding: 26px 24px;
   border-radius: 24px;
   text-align: center;
-  background: linear-gradient(180deg, rgba(42,31,94,0.97), rgba(15,10,50,0.97));
+  background: linear-gradient(180deg, rgba(42,31,94,0.98), rgba(15,10,50,0.98));
   border: 1px solid rgba(255,215,0,0.35);
-  box-shadow: 0 0 60px rgba(140,90,255,0.35);
-  animation: popIn 0.35s cubic-bezier(0.3, 1.4, 0.5, 1) both;
+  animation: popIn 0.3s cubic-bezier(0.3, 1.4, 0.5, 1) both;
 }
-@keyframes popIn { from { transform: scale(0.82) translateY(20px); opacity: 0; } }
+@keyframes popIn { from { transform: scale(0.85) translateY(16px); opacity: 0; } }
 .modal-sub {
   font-size: 10px;
   letter-spacing: 0.5em;
@@ -525,18 +466,13 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   font-family: Georgia, serif;
 }
 .stars-row { display: flex; justify-content: center; gap: 10px; margin-bottom: 14px; }
-.star-big {
-  font-size: 38px;
-  color: #3a3160;
-  text-shadow: none;
-}
+.star-big { font-size: 38px; color: #3a3160; }
 .star-big.earned {
   color: #ffd94d;
-  text-shadow: 0 0 16px rgba(255,214,90,0.85);
-  animation: starPop 0.5s cubic-bezier(0.3, 1.8, 0.5, 1) both;
+  animation: starPop 0.45s cubic-bezier(0.3, 1.8, 0.5, 1) both;
 }
-.star-big.earned:nth-child(2) { animation-delay: 0.18s; }
-.star-big.earned:nth-child(3) { animation-delay: 0.36s; }
+.star-big.earned:nth-child(2) { animation-delay: 0.15s; }
+.star-big.earned:nth-child(3) { animation-delay: 0.3s; }
 @keyframes starPop { from { transform: scale(0) rotate(-120deg); opacity: 0; } }
 
 .btn {
@@ -555,7 +491,6 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
 .btn.primary {
   background: linear-gradient(135deg, #ffd700 0%, #f4a261 100%);
   color: #1a1a3e;
-  box-shadow: 0 0 26px rgba(244,162,97,0.5);
 }
 .btn.ghost {
   background: rgba(255,255,255,0.07);
@@ -587,7 +522,7 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   color: rgba(255,244,214,0.95);
   font-family: Georgia, serif;
 }
-.level-cell.current { border-color: var(--accent); box-shadow: 0 0 10px var(--mist); }
+.level-cell.current { border-color: var(--accent); }
 .level-cell:active { transform: scale(0.94); }
 .level-num { font-size: 15px; font-weight: 700; }
 .level-stars { font-size: 9px; color: #ffd94d; letter-spacing: 0.1em; min-height: 12px; }
@@ -600,7 +535,7 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   height: 12px;
   border-radius: 2px;
   opacity: 0;
-  animation: confettiFall 2.1s ease-in forwards;
+  animation: confettiFall 1.9s ease-in forwards;
   pointer-events: none;
 }
 @keyframes confettiFall {
@@ -609,6 +544,6 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .star, .rise, .bg-orb, .hint { animation: none; }
+  .hint, .confetti { animation: none; }
 }
 `;

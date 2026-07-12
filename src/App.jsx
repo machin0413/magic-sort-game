@@ -27,25 +27,12 @@ const UNIT_H = 23.5;
 const T_MOVE = 140;
 const T_BACK = 180;
 
-// 背景装飾はモジュール読み込み時に一度だけ生成
-const BG_STARS = Array.from({ length: 34 }, () => ({
+// 背景の星（静止装飾・モジュール読み込み時に一度だけ生成）
+const BG_STARS = Array.from({ length: 16 }, () => ({
   left: Math.random() * 100,
   top: Math.random() * 60,
-  delay: Math.random() * 3,
-  dur: 2.2 + Math.random() * 2.5,
   size: 1.5 + Math.random() * 2,
 }));
-const BG_RISE = Array.from({ length: 9 }, () => ({
-  left: 4 + Math.random() * 92,
-  delay: Math.random() * 9,
-  dur: 7 + Math.random() * 6,
-}));
-
-// タッチ端末では視差を切る（タップのたびに盤面が動いて注ぎ座標がずれるため）
-const FINE_POINTER =
-  typeof window !== "undefined" &&
-  !!window.matchMedia &&
-  window.matchMedia("(hover: hover) and (pointer: fine)").matches;
 
 function freshGame(level) {
   const stage = generateStage(level);
@@ -88,8 +75,6 @@ export default function App() {
   const animsRef = useRef(anims);
   animsRef.current = anims;
   const bottleRefs = useRef([]);
-  const sceneRef = useRef(null);
-  const boardRef = useRef(null);
   const animSeq = useRef(0);
 
   useEffect(() => {
@@ -340,25 +325,6 @@ export default function App() {
   const toggleSound = () => updateSave({ sound: !saveRef.current.sound });
   const toggleRunes = () => updateSave({ runes: !saveRef.current.runes });
 
-  // ---------- 視差（ポインタ追従・stateを介さず直接CSS変数を更新） ----------
-  const handleParallax = (e) => {
-    // タッチ端末では無効。注ぎ演出中も盤面を動かさない（クローンとの位置ずれ防止）
-    if (!FINE_POINTER || animsRef.current.length > 0) return;
-    const el = boardRef.current;
-    if (!el || !sceneRef.current) return;
-    const r = sceneRef.current.getBoundingClientRect();
-    const nx = (e.clientX - r.left) / r.width - 0.5;
-    const ny = (e.clientY - r.top) / r.height - 0.5;
-    el.style.setProperty("--tx", `${(nx * 6).toFixed(2)}deg`);
-    el.style.setProperty("--ty", `${(-ny * 4).toFixed(2)}deg`);
-  };
-  const resetParallax = () => {
-    const el = boardRef.current;
-    if (!el) return;
-    el.style.setProperty("--tx", "0deg");
-    el.style.setProperty("--ty", "0deg");
-  };
-
   // ---------- 描画 ----------
   const bwCalc = `min(72px, calc((min(100vw, 560px) - 32px - ${(maxRowLen - 1) * 10}px) / ${maxRowLen}))`;
   const showClearModal = cleared && anims.length === 0;
@@ -367,9 +333,6 @@ export default function App() {
   return (
     <div
       className="scene"
-      ref={(el) => (sceneRef.current = el)}
-      onPointerMove={handleParallax}
-      onPointerLeave={resetParallax}
       style={{
         "--sky0": theme.sky[0],
         "--sky1": theme.sky[1],
@@ -380,7 +343,7 @@ export default function App() {
     >
       <style>{CSS}</style>
 
-      {/* 背景装飾 */}
+      {/* 背景装飾（静止・軽量） */}
       {BG_STARS.map((s, i) => (
         <div
           key={i}
@@ -390,21 +353,9 @@ export default function App() {
             top: `${s.top}%`,
             width: s.size,
             height: s.size,
-            animationDelay: `${s.delay}s`,
-            animationDuration: `${s.dur}s`,
           }}
         />
       ))}
-      <div className="bg-orb" style={{ width: 260, height: 260, left: "-8%", top: "8%", background: theme.mist }} />
-      <div className="bg-orb" style={{ width: 300, height: 300, right: "-12%", top: "42%", background: theme.mist, animationDelay: "-8s" }} />
-      {BG_RISE.map((b, i) => (
-        <div
-          key={i}
-          className="rise"
-          style={{ left: `${b.left}%`, animationDelay: `${b.delay}s`, animationDuration: `${b.dur}s` }}
-        />
-      ))}
-      <div className="bg-mist" />
 
       <div className="frame">
         <header className="brand">
@@ -433,7 +384,7 @@ export default function App() {
         </div>
 
         <div className="board-wrap">
-          <div className="board" ref={(el) => (boardRef.current = el)} style={{ "--bw": bwCalc }}>
+          <div className="board" style={{ "--bw": bwCalc }}>
             {rowsIdx.map((row, ri) => (
               <div key={ri} className={`row ${backCount && ri === 0 ? "back" : "front"}`}>
                 {row.map((idx) => {
@@ -709,6 +660,7 @@ function Bottle({
           <div className="rim" />
           {complete && <div className="cork" />}
           {flashing && <div className="seal-star">✦</div>}
+          {flashing && <div className="seal-flash" />}
           {pourable && <div className="hint">▾</div>}
         </div>
       </div>
