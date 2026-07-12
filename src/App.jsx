@@ -268,11 +268,16 @@ export default function App() {
           prevToLen: curBottles[toIdx].length,
           srcContents: [...curBottles[fromIdx]],
           srcHidden: [...cur.hidden[fromIdx]],
+          flying: false,
           returning: false,
           ...(geo || { bw: null, stream: null }),
         },
       ]);
-      const holdMs = T_MOVE + 170 + units * 70;
+      // 初期姿勢を1フレーム描画してからtransitionで飛ばす
+      setTimeout(() => {
+        setAnims((prev) => prev.map((a) => (a.id === id ? { ...a, flying: true } : a)));
+      }, 30);
+      const holdMs = 30 + T_MOVE + 170 + units * 70;
       setTimeout(() => {
         setAnims((prev) => prev.map((a) => (a.id === id ? { ...a, returning: true } : a)));
       }, holdMs);
@@ -718,17 +723,24 @@ function BottleClone({ anim, showRunes }) {
   const contents = anim.returning
     ? anim.srcContents.slice(0, anim.srcContents.length - anim.units)
     : anim.srcContents;
+  // 待機（選択で浮いた位置）→ 注ぎ姿勢 → 元の位置、をtransitionで移動
+  const pose = anim.returning
+    ? "translate(0px, 0px) rotate(0deg)"
+    : anim.flying
+      ? `translate(${anim.cx}px, ${anim.cy}px) rotate(${anim.rot}deg)`
+      : `translate(0px, ${(-0.24 * anim.bw).toFixed(1)}px) rotate(0deg)`;
   return (
     <div
-      className={`clone ${anim.returning ? "returning" : ""}`}
+      className="clone"
       style={{
         left: anim.left,
         top: anim.top,
         width: anim.bw,
         "--bw": `${anim.bw}px`,
-        "--cx": `${anim.cx}px`,
-        "--cy": `${anim.cy}px`,
-        "--crot": `${anim.rot}deg`,
+        transform: pose,
+        transition: anim.returning
+          ? "transform 0.18s cubic-bezier(0.3, 0, 0.55, 1)"
+          : "transform 0.14s cubic-bezier(0.4, 0, 0.5, 1)",
       }}
     >
       <div className="glass">
