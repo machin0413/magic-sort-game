@@ -399,22 +399,13 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   pointer-events: none;
   z-index: 60;
 }
+/* 飛行はインラインstyleのtransformをtransitionで動かす。
+   @keyframes内のCSS変数はSafariで解決されないことがあるため使わない */
 .clone {
   position: absolute;
   transform-origin: 50% calc(var(--bw) * 1.11);
-  animation: cloneOut 0.14s cubic-bezier(0.4, 0, 0.5, 1) both;
+  will-change: transform;
   filter: drop-shadow(0 10px 14px rgba(0,0,0,0.35));
-}
-.clone.returning {
-  animation: cloneBack 0.18s cubic-bezier(0.3, 0, 0.55, 1) both;
-}
-@keyframes cloneOut {
-  from { transform: translate(0, calc(var(--bw) * -0.24)) rotate(0deg); }
-  to { transform: translate(var(--cx), var(--cy)) rotate(var(--crot)); }
-}
-@keyframes cloneBack {
-  from { transform: translate(var(--cx), var(--cy)) rotate(var(--crot)); }
-  to { transform: translate(0, 0) rotate(0deg); }
 }
 .clone .glass-body { box-shadow: none; }
 
@@ -430,7 +421,7 @@ body { font-family: system-ui, sans-serif; background: #08051f; }
   width: 7px;
   border-radius: 4px;
   transform-origin: top center;
-  animation: streamIn 0.13s ease-out 0.12s both;
+  animation: streamIn 0.13s ease-out 0.17s both;
   box-shadow: 0 0 10px var(--pc), 0 0 22px var(--pc);
 }
 @keyframes streamIn {
